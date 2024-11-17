@@ -13,3 +13,4 @@ six>=1.16.0
 tensorflow>=2.17.0
 tfds-nightly>=4.9.6.dev202409060044
 toolz>=0.12.1
+wandb>=0.18.7

@@ -29,6 +29,7 @@ import numpy as np
 import requests
 import tensorflow as tf
 
+from clrs._src import wandb_utils
 
 flags.DEFINE_list('algorithms', ['bfs'], 'Which algorithms to run.')
 flags.DEFINE_list('train_lengths', ['4', '7', '11', '13', '16'],
@@ -112,12 +113,16 @@ flags.DEFINE_enum('processor_type', 'triplet_gmpnn',
                    'triplet_gpgn', 'triplet_gpgn_mask', 'triplet_gmpnn'],
                   'Processor type to use as the network P.')
 
-flags.DEFINE_string('checkpoint_path', '/tmp/CLRS30',
+flags.DEFINE_string('checkpoint_path', 'tmp/CLRS30',
                     'Path in which checkpoints are saved.')
 flags.DEFINE_string('dataset_path', '/tmp/CLRS30',
                     'Path in which dataset is stored.')
+flags.DEFINE_boolean('checkpoint_wandb', True,
+                     'Whether to save the checkpoint files to weights and biases.')
 flags.DEFINE_boolean('freeze_processor', False,
                      'Whether to freeze the processor of the model.')
+flags.DEFINE_boolean('use_wandb', True,
+                     'Whether to log to weights and biases.')
 
 FLAGS = flags.FLAGS
 
@@ -398,6 +403,8 @@ def create_samplers(
 
 
 def main(unused_argv):
+  global FLAGS
+  FLAGS = wandb_utils.init(FLAGS)
   if FLAGS.hint_mode == 'encoded_decoded':
     encode_hints = True
     decode_hints = True
@@ -453,6 +460,7 @@ def main(unused_argv):
       hint_teacher_forcing=FLAGS.hint_teacher_forcing,
       hint_repred_mode=FLAGS.hint_repred_mode,
       nb_msg_passing_steps=FLAGS.nb_msg_passing_steps,
+      checkpoint_wandb=FLAGS.checkpoint_wandb,
       )
 
   eval_model = clrs.models.BaselineModel(
@@ -516,9 +524,10 @@ def main(unused_argv):
       else:
         examples_in_chunk = len(feedback.features.lengths)
       current_train_items[algo_idx] += examples_in_chunk
-      logging.info('Algo %s step %i current loss %f, current_train_items %i.',
-                   FLAGS.algorithms[algo_idx], step,
-                   cur_loss, current_train_items[algo_idx])
+      wandb_utils.log({FLAGS.algorithms[algo_idx]: {
+          "train_loss": cur_loss
+          # "training_items": current_train_items
+      }}, step=step)
 
     # Periodically evaluate model
     if step >= next_eval:
@@ -536,8 +545,8 @@ def main(unused_argv):
             val_sample_counts[algo_idx],
             new_rng_key,
             extras=common_extras)
-        logging.info('(val) algo %s step %d: %s',
-                     FLAGS.algorithms[algo_idx], step, val_stats)
+        wandb_utils.log({FLAGS.algorithms[algo_idx]:
+                     {"val." + k: v for k, v in val_stats.items() if k not in ["step", "algorithm"]}}, step=step)
         val_scores[algo_idx] = val_stats['score']
 
       next_eval += FLAGS.eval_every
