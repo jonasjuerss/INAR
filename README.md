@@ -1,3 +1,5 @@
+![test badge](https://github.com/jonasjuerss/INAR/actions/workflows/test.yml/badge.svg)
+
 # The CLRS Algorithmic Reasoning Benchmark
 
 Learning representations of algorithms is an emerging area of machine learning,
