@@ -416,7 +416,8 @@ class Net(hk.Module):
     # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # Encode node/edge/graph features from inputs and (optionally) hints.
     trajectories = [inputs]
-    trajectories.append([time_fts_dp])
+    if time_fts_dp!=None:
+        trajectories.append([time_fts_dp])
     
     # print(hints)
     # exit()
