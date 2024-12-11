@@ -402,7 +402,7 @@ class Net(hk.Module):
       spec: _Spec,
       encs: Dict[str, List[hk.Module]],
       decs: Dict[str, Tuple[hk.Module]],
-      repred: bool, time_fts_dp:_DataPoint,
+      repred: bool, time_fts_dp:_DataPoint = None,
   ):
     """Generates one-step predictions."""
 
