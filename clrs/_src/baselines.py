@@ -321,14 +321,32 @@ class BaselineModel(model.Model):
     lss = self._maybe_pmean(lss)
     return lss, params, opt_state
 
+  # def _predict(self, params, rng_key: hk.PRNGSequence, features: _Features,
+  #              algorithm_index: int, return_hints: bool,
+  #              return_all_outputs: bool):
+  #   outs, hint_preds = self.net_fn.apply(
+  #       params, rng_key, [features],
+  #       repred=True, algorithm_index=algorithm_index,
+  #       return_hints=return_hints,
+  #       return_all_outputs=return_all_outputs)
+  #   outs = decoders.postprocess(self._spec[algorithm_index],
+  #                               outs,
+  #                               sinkhorn_temperature=0.1,
+  #                               sinkhorn_steps=50,
+  #                               hard=True,
+  #                               )
+  #   return outs, hint_preds
+
   def _predict(self, params, rng_key: hk.PRNGSequence, features: _Features,
                algorithm_index: int, return_hints: bool,
-               return_all_outputs: bool):
+               return_all_outputs: bool, inference:bool = False,):
+    # print("in predict")
+    # print(inference)
     outs, hint_preds = self.net_fn.apply(
         params, rng_key, [features],
         repred=True, algorithm_index=algorithm_index,
         return_hints=return_hints,
-        return_all_outputs=return_all_outputs)
+        return_all_outputs=return_all_outputs,inference=True,)
     outs = decoders.postprocess(self._spec[algorithm_index],
                                 outs,
                                 sinkhorn_temperature=0.1,
@@ -377,7 +395,7 @@ class BaselineModel(model.Model):
   def predict(self, rng_key: hk.PRNGSequence, features: _Features,
               algorithm_index: Optional[int] = None,
               return_hints: bool = False,
-              return_all_outputs: bool = False):
+              return_all_outputs: bool = False, inference=False,):
     """Model inference step."""
     if algorithm_index is None:
       assert len(self._spec) == 1
@@ -390,7 +408,7 @@ class BaselineModel(model.Model):
             self._device_params, rng_keys, features,
             algorithm_index,
             return_hints,
-            return_all_outputs))
+            return_all_outputs, inference,))
 
   def _loss(self, params, rng_key, feedback, algorithm_index):
     """Calculates model loss f(feedback; params)."""

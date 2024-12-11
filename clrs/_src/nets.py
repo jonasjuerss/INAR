@@ -31,7 +31,7 @@ from clrs._src import specs
 import haiku as hk
 import jax
 import jax.numpy as jnp
-
+import numpy as np
 
 _Array = chex.Array
 _DataPoint = probing.DataPoint
@@ -102,7 +102,7 @@ class Net(hk.Module):
     self.use_lstm = use_lstm
     self.encoder_init = encoder_init
     self.nb_msg_passing_steps = nb_msg_passing_steps
-
+    
   def _msg_passing_step(self,
                         mp_state: _MessagePassingScanState,
                         i: int,
@@ -113,12 +113,35 @@ class Net(hk.Module):
                         nb_nodes: int,
                         inputs: _Trajectory,
                         first_step: bool,
+                        time_fts: _DataPoint,
                         spec: _Spec,
                         encs: Dict[str, List[hk.Module]],
                         decs: Dict[str, Tuple[hk.Module]],
                         return_hints: bool,
-                        return_all_outputs: bool
-                        ):
+                        return_all_outputs: bool, inference = False,
+                        ):   
+        
+#     if inference:
+#         # print("in inference")
+#         cur_hint = []
+        
+#         time_fts_dp = jnp.asarray(time_fts.data)[-2]
+        
+#         time_fts_dp = probing.DataPoint(
+#                     name='time_linear_encoding', location=time_fts.location, type_=time_fts.type_, data=time_fts_dp)
+
+#         # print(time_fts_dp)
+#         # exit()
+#         hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
+#         inputs, cur_hint, mp_state.hiddens,
+#         batch_size, nb_nodes, mp_state.lstm_state,
+#         spec, encs, decs, repred, time_fts_dp)
+
+#         return output_preds_cand
+        
+    # if not inference:
+        # jax.debug.print("inference----------: {}", inference)
+        
     if self.decode_hints and not first_step:
       assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
       hard_postprocess = (self._hint_repred_mode == 'hard' or
@@ -127,17 +150,17 @@ class Net(hk.Module):
                                           mp_state.hint_preds,
                                           sinkhorn_temperature=0.1,
                                           sinkhorn_steps=25,
-                                          hard=hard_postprocess)
+                                          hard=hard_postprocess)    
     if repred and self.decode_hints and not first_step:
       cur_hint = []
       for hint in decoded_hint:
         cur_hint.append(decoded_hint[hint])
+
     else:
       cur_hint = []
       needs_noise = (self.decode_hints and not first_step and
                      self._hint_teacher_forcing < 1.0)
       if needs_noise:
-        # For noisy teacher forcing, choose which examples in the batch to force
         force_mask = jax.random.bernoulli(
             hk.next_rng_key(), self._hint_teacher_forcing,
             (batch_size,))
@@ -155,34 +178,38 @@ class Net(hk.Module):
             # forcing) to its one-hot version.
             hint_data = hk.one_hot(hint_data, nb_nodes)
             typ = _Type.SOFT_POINTER
-          hint_data = jnp.where(_expand_to(force_mask, hint_data),
+          hint_data = jnp.where(_expand_to(force_mask, hint_data), 
                                 hint_data,
                                 decoded_hint[hint.name].data)
         cur_hint.append(
             probing.DataPoint(
                 name=hint.name, location=loc, type_=typ, data=hint_data))
 
+    time_fts_dp = jnp.asarray(time_fts.data)[i]
+    time_fts_dp = probing.DataPoint(
+                name='time_linear_encoding', location=time_fts.location, type_=time_fts.type_, data=time_fts_dp)
+
     hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
         inputs, cur_hint, mp_state.hiddens,
         batch_size, nb_nodes, mp_state.lstm_state,
-        spec, encs, decs, repred)
+        spec, encs, decs, repred, time_fts_dp)
 
     if first_step:
       output_preds = output_preds_cand
+
     else:
       output_preds = {}
       for outp in mp_state.output_preds:
-        is_not_done = _is_not_done_broadcast(lengths, i,
-                                             output_preds_cand[outp])
-        output_preds[outp] = is_not_done * output_preds_cand[outp] + (
-            1.0 - is_not_done) * mp_state.output_preds[outp]
+        is_not_done = _is_not_done_broadcast(lengths, i,output_preds_cand[outp])
+        is_not_done = is_not_done+0
+        output_preds[outp] = is_not_done * output_preds_cand[outp] + (1.0 - is_not_done) * mp_state.output_preds[outp]
 
     new_mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
         hint_preds=hint_preds,
         output_preds=output_preds,
         hiddens=hiddens,
         lstm_state=lstm_state)
-    # Save memory by not stacking unnecessary fields
+
     accum_mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
         hint_preds=hint_preds if return_hints else None,
         output_preds=output_preds if return_all_outputs else None,
@@ -192,47 +219,24 @@ class Net(hk.Module):
     # the second value is the output that will be stacked over steps.
     return new_mp_state, accum_mp_state
 
+
+
   def __call__(self, features_list: List[_Features], repred: bool,
                algorithm_index: int,
                return_hints: bool,
-               return_all_outputs: bool):
-    """Process one batch of data.
+               return_all_outputs: bool, inference=False,):
 
-    Args:
-      features_list: A list of _Features objects, each with the inputs, hints
-        and lengths for a batch o data corresponding to one algorithm.
-        The list should have either length 1, at train/evaluation time,
-        or length equal to the number of algorithms this Net is meant to
-        process, at initialization.
-      repred: False during training, when we have access to ground-truth hints.
-        True in validation/test mode, when we have to use our own
-        hint predictions.
-      algorithm_index: Which algorithm is being processed. It can be -1 at
-        initialisation (either because we are initialising the parameters of
-        the module or because we are intialising the message-passing state),
-        meaning that all algorithms should be processed, in which case
-        `features_list` should have length equal to the number of specs of
-        the Net. Otherwise, `algorithm_index` should be
-        between 0 and `length(self.spec) - 1`, meaning only one of the
-        algorithms will be processed, and `features_list` should have length 1.
-      return_hints: Whether to accumulate and return the predicted hints,
-        when they are decoded.
-      return_all_outputs: Whether to return the full sequence of outputs, or
-        just the last step's output.
-
-    Returns:
-      A 2-tuple with (output predictions, hint predictions)
-      for the selected algorithm.
-    """
+    
     if algorithm_index == -1:
       algorithm_indices = range(len(features_list))
     else:
       algorithm_indices = [algorithm_index]
     assert len(algorithm_indices) == len(features_list)
-
+    
     self.encoders, self.decoders = self._construct_encoders_decoders()
     self.processor = self.processor_factory(self.hidden_dim)
-
+    # print(self.encoders)
+    # exit()
     # Optionally construct LSTM.
     if self.use_lstm:
       self.lstm = hk.LSTM(
@@ -247,11 +251,22 @@ class Net(hk.Module):
       inputs = features.inputs
       hints = features.hints
       lengths = features.lengths
-
+      time_steps_and_batch = hints[-1].data.shape#[0]      
+    
+      def generate_time_steps_batch(N, T):
+        # Create a batch of time steps where each sample gets T equally spaced steps
+        time_steps_batch = np.linspace(0, 1, T)  # Generate the time steps for a single sample
+        # Reshape the array to have shape (T, N) where each column corresponds to one sample
+        return np.tile(time_steps_batch, (N, 1)).T  # Transpose to get (T, N)        
+          
+      time_fts = generate_time_steps_batch(time_steps_and_batch[1], time_steps_and_batch[0])
+    
+      time_fts = probing.DataPoint(
+                name='time_linear_encoding', location='graph', type_ = 'scalar', data=time_fts)
+            
       batch_size, nb_nodes = _data_dimensions(features)
-
-      nb_mp_steps = max(1, hints[0].data.shape[0] - 1)
-      hiddens = jnp.zeros((batch_size, nb_nodes, self.hidden_dim))
+      nb_mp_steps = max(1, hints[0].data.shape[0] - 1) ### traj
+      hiddens = jnp.zeros((batch_size, nb_nodes, self.hidden_dim)) #### 4, 4, 128
 
       if self.use_lstm:
         lstm_state = lstm_init(batch_size * nb_nodes)
@@ -261,16 +276,17 @@ class Net(hk.Module):
       else:
         lstm_state = None
 
+      
       mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
           hint_preds=None, output_preds=None,
-          hiddens=hiddens, lstm_state=lstm_state)
-
-      # Do the first step outside of the scan because it has a different
-      # computation graph.
+          hiddens=hiddens, lstm_state=lstm_state)            
+        
+      # jax.debug.print("Carry: {}", 'innnn')  
       common_args = dict(
           hints=hints,
           repred=repred,
           inputs=inputs,
+          time_fts = time_fts,
           batch_size=batch_size,
           nb_nodes=nb_nodes,
           lengths=lengths,
@@ -280,45 +296,61 @@ class Net(hk.Module):
           return_hints=return_hints,
           return_all_outputs=return_all_outputs,
           )
-      mp_state, lean_mp_state = self._msg_passing_step(
-          mp_state,
-          i=0,
-          first_step=True,
-          **common_args)
+    
 
-      # Then scan through the rest.
-      scan_fn = functools.partial(
-          self._msg_passing_step,
-          first_step=False,
-          **common_args)
+      # if inference:     
+      if inference:
+        time_fts = time_fts.data[-2]#generate_time_steps_batch(time_steps_and_batch[1], time_steps_and_batch[0])
+        
+        time_fts = probing.DataPoint(
+                name='time_linear_encoding', location='graph', type_ = 'scalar', data=time_fts)
+        cur_hint = []
+        hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
+        inputs, cur_hint, mp_state.hiddens,
+        batch_size, nb_nodes, mp_state.lstm_state,
+        self.spec[algorithm_index], self.encoders[algorithm_index], self.decoders[algorithm_index], repred, time_fts)
+        
+        return output_preds_cand, output_preds_cand
+          # mp_state = self._msg_passing_step(mp_state, i=0, first_step=True, inference = inference, **common_args)
+          # jax.debug.print("Carry: {}", 'innnn')  
+          # return mp_state, mp_state
+    
+        
+      if not inference: 
+          mp_state, lean_mp_state = self._msg_passing_step(mp_state, i=0, first_step=True, inference = inference, **common_args)
+            
+          scan_fn = functools.partial(
+              self._msg_passing_step,
+              first_step=False,
+              **common_args)
 
-      output_mp_state, accum_mp_state = hk.scan(
-          scan_fn,
-          mp_state,
-          jnp.arange(nb_mp_steps - 1) + 1,
-          length=nb_mp_steps - 1)
 
-    # We only return the last algorithm's output. That's because
-    # the output only matters when a single algorithm is processed; the case
-    # `algorithm_index==-1` (meaning all algorithms should be processed)
-    # is used only to init parameters.
-    accum_mp_state = jax.tree_util.tree_map(
-        lambda init, tail: jnp.concatenate([init[None], tail], axis=0),
-        lean_mp_state, accum_mp_state)
+          output_mp_state, accum_mp_state = hk.scan(
+              scan_fn,
+              mp_state,
+              jnp.arange(nb_mp_steps - 1) + 1,
+              length=nb_mp_steps - 1)
 
-    def invert(d):
-      """Dict of lists -> list of dicts."""
-      if d:
-        return [dict(zip(d, i)) for i in zip(*d.values())]
+          accum_mp_state = jax.tree_util.tree_map(
+            lambda init, tail: jnp.concatenate([init[None], tail], axis=0),
+            lean_mp_state, accum_mp_state)
 
-    if return_all_outputs:
-      output_preds = {k: jnp.stack(v)
-                      for k, v in accum_mp_state.output_preds.items()}
-    else:
-      output_preds = output_mp_state.output_preds
-    hint_preds = invert(accum_mp_state.hint_preds)
+          def invert(d):
+            """Dict of lists -> list of dicts."""
+            if d:
+              return [dict(zip(d, i)) for i in zip(*d.values())]
 
-    return output_preds, hint_preds
+
+          if return_all_outputs:
+            output_preds = {k: jnp.stack(v)
+                          for k, v in accum_mp_state.output_preds.items()}
+          else:
+            output_preds = output_mp_state.output_preds
+
+
+          hint_preds = invert(accum_mp_state.hint_preds)
+
+          return output_preds, hint_preds
 
   def _construct_encoders_decoders(self):
     """Constructs encoders and decoders, separate for each algorithm."""
@@ -331,7 +363,6 @@ class Net(hk.Module):
       for name, (stage, loc, t) in spec.items():
         if stage == _Stage.INPUT or (
             stage == _Stage.HINT and self.encode_hints):
-          # Build input encoders.
           if name == specs.ALGO_IDX_INPUT_NAME:
             if enc_algo_idx is None:
               enc_algo_idx = [hk.Linear(self.hidden_dim,
@@ -342,17 +373,22 @@ class Net(hk.Module):
                 stage, loc, t, hidden_dim=self.hidden_dim,
                 init=self.encoder_init,
                 name=f'algo_{algo_idx}_{name}')
-
+        
         if stage == _Stage.OUTPUT or (
             stage == _Stage.HINT and self.decode_hints):
-          # Build output decoders.
           dec[name] = decoders.construct_decoders(
               loc, t, hidden_dim=self.hidden_dim,
               nb_dims=self.nb_dims[algo_idx][name],
               name=f'algo_{algo_idx}_{name}')
+        
+      enc['time_linear_encoding'] = encoders.construct_encoders(
+                'hint', 'graph', 'scalar', hidden_dim=self.hidden_dim,
+                init=self.encoder_init,
+                name=f'algo_{algo_idx}_{name}')
+    
       encoders_.append(enc)
       decoders_.append(dec)
-
+ 
     return encoders_, decoders_
 
   def _one_step_pred(
@@ -366,7 +402,7 @@ class Net(hk.Module):
       spec: _Spec,
       encs: Dict[str, List[hk.Module]],
       decs: Dict[str, Tuple[hk.Module]],
-      repred: bool,
+      repred: bool, time_fts_dp:_DataPoint,
   ):
     """Generates one-step predictions."""
 
@@ -380,9 +416,14 @@ class Net(hk.Module):
     # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # Encode node/edge/graph features from inputs and (optionally) hints.
     trajectories = [inputs]
+    trajectories.append([time_fts_dp])
+    
+    # print(hints)
+    # exit()
     if self.encode_hints:
       trajectories.append(hints)
-
+    
+    time_feats = None
     for trajectory in trajectories:
       for dp in trajectory:
         try:
@@ -392,7 +433,7 @@ class Net(hk.Module):
           encoder = encs[dp.name]
           edge_fts = encoders.accum_edge_fts(encoder, dp, edge_fts)
           node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
-          graph_fts = encoders.accum_graph_fts(encoder, dp, graph_fts)
+          graph_fts, encoding = encoders.accum_graph_fts(encoder, dp, graph_fts)
         except Exception as e:
           raise Exception(f'Failed to process {dp}') from e
 
@@ -407,6 +448,7 @@ class Net(hk.Module):
           nxt_hidden,
           batch_size=batch_size,
           nb_nodes=nb_nodes,
+          time_fts_dp = time_feats,
       )
 
     if not repred:      # dropout only on training
@@ -419,7 +461,8 @@ class Net(hk.Module):
     else:
       nxt_lstm_state = None
 
-    h_t = jnp.concatenate([node_fts, hidden, nxt_hidden], axis=-1)
+    h_t = jnp.concatenate([node_fts, nxt_hidden], axis=-1) 
+    
     if nxt_edge is not None:
       e_t = jnp.concatenate([edge_fts, nxt_edge], axis=-1)
     else:
@@ -438,7 +481,7 @@ class Net(hk.Module):
         inf_bias_edge=self.processor.inf_bias_edge,
         repred=repred,
     )
-
+    
     return nxt_hidden, output_preds, hint_preds, nxt_lstm_state
 
 
@@ -714,6 +757,10 @@ def _expand_to(x: _Array, y: _Array) -> _Array:
 
 def _is_not_done_broadcast(lengths, i, tensor):
   is_not_done = (lengths > i + 1) * 1.0
+  # print('is_not_done', is_not_done, '**************************************************************************************')
   while len(is_not_done.shape) < len(tensor.shape):  # pytype: disable=attribute-error  # numpy-scalars
     is_not_done = jnp.expand_dims(is_not_done, -1)
+  # print('is_not_done', is_not_done, tensor, '**************************************************************************************')
+  # exit()
+  
   return is_not_done
