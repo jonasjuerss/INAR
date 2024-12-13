@@ -18,6 +18,7 @@
 import functools
 import os
 import shutil
+import timeit
 from typing import Any, Dict, List, Optional
 
 from absl import app
@@ -58,7 +59,7 @@ flags.DEFINE_integer('chunk_length', 16,
                      '`chunked_training` is True.')
 flags.DEFINE_integer('train_steps', 10000, 'Number of training iterations.')
 flags.DEFINE_integer('eval_every', 50, 'Evaluation frequency (in steps).')
-flags.DEFINE_integer('test_every', 500, 'Evaluation frequency (in steps).')
+flags.DEFINE_integer('test_every', 100, 'Test frequency (in steps).')
 
 flags.DEFINE_integer('hidden_size', 128,
                      'Number of hidden units of the model.')
@@ -401,6 +402,26 @@ def create_samplers(
           test_samplers, test_sample_counts,
           spec_list)
 
+def _eval_and_log(eval_model, test_samplers, test_sample_counts, current_train_items, rng_key, step: int, wandb_prefix: str):
+  all_test_stats = []
+  for algo_idx in range(len(test_samplers)):
+    common_extras = {'examples_seen': current_train_items[algo_idx],
+                     'step': step,
+                     'algorithm': FLAGS.algorithms[algo_idx]}
+
+    new_rng_key, rng_key = jax.random.split(rng_key)
+    test_stats = collect_and_eval(
+      test_samplers[algo_idx],
+      functools.partial(eval_model.predict, algorithm_index=algo_idx),
+      test_sample_counts[algo_idx],
+      new_rng_key,
+      extras=common_extras)
+    all_test_stats.append(test_stats)
+    wandb_utils.log({FLAGS.algorithms[algo_idx]:
+                       {f"{wandb_prefix}.{k}": v for k, v in test_stats.items() if k not in ["step", "algorithm"]}},
+                    step=step)
+    return rng_key, all_test_stats
+
 
 def main(unused_argv):
   global FLAGS
@@ -482,6 +503,7 @@ def main(unused_argv):
   current_train_items = [0] * len(FLAGS.algorithms)
   step = 0
   next_eval = 0
+  next_test = 0
   # Make sure scores improve on first step, but not overcome best score
   # until all algos have had at least one evaluation.
   val_scores = [-99999.9] * len(FLAGS.algorithms)
@@ -532,23 +554,8 @@ def main(unused_argv):
     # Periodically evaluate model
     if step >= next_eval:
       eval_model.params = train_model.params
-      for algo_idx in range(len(train_samplers)):
-        common_extras = {'examples_seen': current_train_items[algo_idx],
-                         'step': step,
-                         'algorithm': FLAGS.algorithms[algo_idx]}
-
-        # Validation info.
-        new_rng_key, rng_key = jax.random.split(rng_key)
-        val_stats = collect_and_eval(
-            val_samplers[algo_idx],
-            functools.partial(eval_model.predict, algorithm_index=algo_idx),
-            val_sample_counts[algo_idx],
-            new_rng_key,
-            extras=common_extras)
-        wandb_utils.log({FLAGS.algorithms[algo_idx]:
-                     {"val." + k: v for k, v in val_stats.items() if k not in ["step", "algorithm"]}}, step=step)
-        val_scores[algo_idx] = val_stats['score']
-
+      rng_key, all_val_stats = _eval_and_log(eval_model, val_samplers, val_sample_counts, current_train_items, rng_key, step, "val")
+      val_scores = [val_stats['score'] for val_stats in all_val_stats]
       next_eval += FLAGS.eval_every
 
       # If best total score, update best checkpoint.
@@ -566,26 +573,23 @@ def main(unused_argv):
       else:
         logging.info('Not saving new best model, %s', msg)
 
+      if step >= next_test:
+        eval_model.params = train_model.params
+        start_time = timeit.default_timer()
+        rng_key, _ = _eval_and_log(eval_model, test_samplers, test_sample_counts, current_train_items, rng_key, step,
+                                "test")
+        end_time = timeit.default_timer()
+        wandb_utils.log({"test.time": end_time - start_time}, step=step)
+        next_test += FLAGS.test_every
+
     step += 1
     length_idx = (length_idx + 1) % len(train_lengths)
 
   logging.info('Restoring best model from checkpoint...')
   eval_model.restore_model('best.pkl', only_load_processor=False)
 
-  for algo_idx in range(len(train_samplers)):
-    common_extras = {'examples_seen': current_train_items[algo_idx],
-                     'step': step,
-                     'algorithm': FLAGS.algorithms[algo_idx]}
-
-    new_rng_key, rng_key = jax.random.split(rng_key)
-    test_stats = collect_and_eval(
-        test_samplers[algo_idx],
-        functools.partial(eval_model.predict, algorithm_index=algo_idx),
-        test_sample_counts[algo_idx],
-        new_rng_key,
-        extras=common_extras)
-    logging.info('(test) algo %s : %s', FLAGS.algorithms[algo_idx], test_stats)
-
+  rng_key, _ = _eval_and_log(eval_model, test_samplers, test_sample_counts, current_train_items, rng_key, step,
+                          "final_test")
   logging.info('Done!')
 
 
