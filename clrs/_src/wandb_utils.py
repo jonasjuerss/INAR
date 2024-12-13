@@ -1,7 +1,10 @@
 import wandb
 def init(args):
   if args.use_wandb:
-    wandb.init(project="INAR", entity="camb-mphil", config=args)
+    kwargs = dict(project="INAR", entity="camb-mphil", config=args)
+    if args.wandb_name is not None:
+      kwargs["name"] = f"{args.wandb_name}-{args.seed}"
+    wandb.init(**kwargs)
     return wandb.config
   return args
 
