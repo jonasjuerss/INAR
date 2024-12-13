@@ -575,14 +575,14 @@ def main(unused_argv):
       else:
         logging.info('Not saving new best model, %s', msg)
 
-      if step >= next_test:
-        eval_model.params = train_model.params
-        start_time = timeit.default_timer()
-        rng_key, _ = _eval_and_log(eval_model, test_samplers, test_sample_counts, current_train_items, rng_key, step,
-                                "test")
-        end_time = timeit.default_timer()
-        wandb_utils.log({"test.time": end_time - start_time}, step=step)
-        next_test += FLAGS.test_every
+    if step >= next_test:
+      eval_model.params = train_model.params
+      start_time = timeit.default_timer()
+      rng_key, _ = _eval_and_log(eval_model, test_samplers, test_sample_counts, current_train_items, rng_key, step,
+                              "test")
+      end_time = timeit.default_timer()
+      wandb_utils.log({"test.time": end_time - start_time}, step=step)
+      next_test += FLAGS.test_every
 
     step += 1
     length_idx = (length_idx + 1) % len(train_lengths)
