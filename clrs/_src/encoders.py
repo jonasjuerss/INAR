@@ -105,6 +105,7 @@ def accum_edge_fts(encoders, dp: _DataPoint, edge_fts: _Array) -> _Array:
       encoding_2 = encoders[1](jnp.expand_dims(dp.data, -1))
       edge_fts += jnp.mean(encoding, axis=1) + jnp.mean(encoding_2, axis=2)
     else:
+      
       edge_fts += encoding
 
   return edge_fts
@@ -124,11 +125,13 @@ def accum_node_fts(encoders, dp: _DataPoint, node_fts: _Array) -> _Array:
 def accum_graph_fts(encoders, dp: _DataPoint,
                     graph_fts: _Array) -> _Array:
   """Encodes and accumulates graph features."""
+  encoding = None
   if dp.location == _Location.GRAPH and dp.type_ != _Type.POINTER:
+    
     encoding = _encode_inputs(encoders, dp)
     graph_fts += encoding
 
-  return graph_fts
+  return graph_fts, encoding
 
 
 def _encode_inputs(encoders, dp: _DataPoint) -> _Array:

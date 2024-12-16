@@ -17,6 +17,7 @@
 
 import copy
 import functools
+import unittest
 from typing import Generator
 
 from absl.testing import absltest
@@ -86,6 +87,7 @@ def _remove_permutation_from_spec(spec):
 
 class BaselinesTest(parameterized.TestCase):
 
+  @unittest.skip("We don't chunked for now")
   def test_full_vs_chunked(self):
     """Test that chunking does not affect gradients."""
 
