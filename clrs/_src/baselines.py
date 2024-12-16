@@ -156,7 +156,7 @@ class BaselineModel(model.Model):
       name: str = 'base_model',
       nb_msg_passing_steps: int = 1,
       # process_hidden:bool = False,
-      time_encoding:bool = True,
+      time_encoding: bool = False,
   ):
     """Constructor for BaselineModel.
 
