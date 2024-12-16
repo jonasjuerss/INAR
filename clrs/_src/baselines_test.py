@@ -87,7 +87,7 @@ def _remove_permutation_from_spec(spec):
 
 class BaselinesTest(parameterized.TestCase):
 
-  @unittest.skip("We don't support decode_hints=encode_hints=True nor MPNN for now")
+  @unittest.skip("We don't chunked for now")
   def test_full_vs_chunked(self):
     """Test that chunking does not affect gradients."""
 
@@ -228,7 +228,6 @@ class BaselinesTest(parameterized.TestCase):
       else:  # params of non-trained algorithms
         assert param_change == 0.0
 
-  @unittest.skip("We don't support decode_hints=encode_hints=True nor MPNN for now")
   @parameterized.parameters(True, False)
   def test_multi_algorithm_idx(self, is_chunked):
     """Test that algorithm selection works as intended."""
