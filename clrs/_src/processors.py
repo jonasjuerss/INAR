@@ -133,13 +133,8 @@ class GAT(Processor):
     # graph_fts = graph_fts + time_pos_encoding  # adding to graph features
     # z = jnp.concatenate([node_fts, time_fts_dp[..., None]], axis=-1)  # [B, N, F + time_dim]
     # z = jnp.concatenate((node_fts, time_fts_dp), axis=-1)  # Shape: (2, 4, 130)
-    
-    if hidden is not None:
-      z = jnp.concatenate([node_fts, hidden], axis=-1)
-      
-    else:
-      z = node_fts#, time_fts_dp), axis=-1)  # Shape: (2, 4, 130)
 
+    z = node_fts if hidden is None else jnp.concatenate([node_fts, hidden], axis=-1)
     
     # z = node_fts + time_fts_dp[:, jnp.newaxis, :]
     # time_fts_dp = jnp.repeat(time_fts_dp[:, jnp.newaxis, :], repeats=node_fts.shape[1], axis=1)
@@ -249,7 +244,7 @@ class GATv2(Processor):
     assert graph_fts.shape[:-1] == (b,)
     assert adj_mat.shape == (b, n, n)
 
-    z = jnp.concatenate([node_fts, hidden], axis=-1)
+    z = node_fts if hidden is None else jnp.concatenate([node_fts, hidden], axis=-1)
     m = hk.Linear(self.out_size)
     skip = hk.Linear(self.out_size)
 
@@ -466,7 +461,13 @@ class PGN(Processor):
     assert graph_fts.shape[:-1] == (b,)
     assert adj_mat.shape == (b, n, n)
 
-    z = jnp.concatenate([node_fts, hidden], axis=-1)
+    if hidden is None:
+      if self.gated:
+        raise ValueError("hidden=None is not supported for gated=True")
+      z = node_fts
+    else:
+      z = jnp.concatenate([node_fts, hidden], axis=-1)
+
     m_1 = hk.Linear(self.mid_size)
     m_2 = hk.Linear(self.mid_size)
     m_e = hk.Linear(self.mid_size)
