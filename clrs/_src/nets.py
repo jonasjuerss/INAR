@@ -84,7 +84,8 @@ class Net(hk.Module):
       hint_teacher_forcing: float,
       hint_repred_mode='soft',
       nb_dims=None,
-      nb_msg_passing_steps=1,
+      nb_msg_passing_steps=1, 
+      time_encoding: bool = False,
       name: str = 'net',
   ):
     """Constructs a `Net`."""
@@ -102,6 +103,8 @@ class Net(hk.Module):
     self.use_lstm = use_lstm
     self.encoder_init = encoder_init
     self.nb_msg_passing_steps = nb_msg_passing_steps
+    # self.process_hidden = process_hidden
+    self.time_encoding = time_encoding
     
   def _msg_passing_step(self,
                         mp_state: _MessagePassingScanState,
@@ -118,31 +121,24 @@ class Net(hk.Module):
                         encs: Dict[str, List[hk.Module]],
                         decs: Dict[str, Tuple[hk.Module]],
                         return_hints: bool,
-                        return_all_outputs: bool, inference = False,
+                        return_all_outputs: bool, 
                         ):   
         
 #     if inference:
-#         # print("in inference")
 #         cur_hint = []
-        
 #         time_fts_dp = jnp.asarray(time_fts.data)[-2]
-        
 #         time_fts_dp = probing.DataPoint(
 #                     name='time_linear_encoding', location=time_fts.location, type_=time_fts.type_, data=time_fts_dp)
-
-#         # print(time_fts_dp)
-#         # exit()
 #         hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
 #         inputs, cur_hint, mp_state.hiddens,
 #         batch_size, nb_nodes, mp_state.lstm_state,
 #         spec, encs, decs, repred, time_fts_dp)
-
 #         return output_preds_cand
         
-    # if not inference:
-        # jax.debug.print("inference----------: {}", inference)
+    
+
         
-    if self.decode_hints and not first_step:
+    if self.decode_hints and not first_step and not self.time_encoding:
       assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
       hard_postprocess = (self._hint_repred_mode == 'hard' or
                           (self._hint_repred_mode == 'hard_on_eval' and repred))
@@ -151,15 +147,17 @@ class Net(hk.Module):
                                           sinkhorn_temperature=0.1,
                                           sinkhorn_steps=25,
                                           hard=hard_postprocess)    
-    if repred and self.decode_hints and not first_step:
+    if repred and self.decode_hints and not first_step and not self.time_encoding:
       cur_hint = []
       for hint in decoded_hint:
         cur_hint.append(decoded_hint[hint])
 
     else:
       cur_hint = []
-      needs_noise = (self.decode_hints and not first_step and
+      needs_noise = (self.decode_hints and not self.time_encoding and not first_step and
                      self._hint_teacher_forcing < 1.0)
+      # needs_noise = (self.decode_hints and not first_step and
+      #                self._hint_teacher_forcing < 1.0)
       if needs_noise:
         force_mask = jax.random.bernoulli(
             hk.next_rng_key(), self._hint_teacher_forcing,
@@ -224,19 +222,18 @@ class Net(hk.Module):
   def __call__(self, features_list: List[_Features], repred: bool,
                algorithm_index: int,
                return_hints: bool,
-               return_all_outputs: bool, inference=False,):
+               return_all_outputs: bool, inference:bool = False,):
 
-    
     if algorithm_index == -1:
       algorithm_indices = range(len(features_list))
     else:
       algorithm_indices = [algorithm_index]
     assert len(algorithm_indices) == len(features_list)
     
+    
     self.encoders, self.decoders = self._construct_encoders_decoders()
     self.processor = self.processor_factory(self.hidden_dim)
-    # print(self.encoders)
-    # exit()
+
     # Optionally construct LSTM.
     if self.use_lstm:
       self.lstm = hk.LSTM(
@@ -259,8 +256,7 @@ class Net(hk.Module):
         # Reshape the array to have shape (T, N) where each column corresponds to one sample
         return np.tile(time_steps_batch, (N, 1)).T  # Transpose to get (T, N)        
           
-      time_fts = generate_time_steps_batch(time_steps_and_batch[1], time_steps_and_batch[0])
-    
+      time_fts = generate_time_steps_batch(time_steps_and_batch[1], time_steps_and_batch[0])  
       time_fts = probing.DataPoint(
                 name='time_linear_encoding', location='graph', type_ = 'scalar', data=time_fts)
             
@@ -276,12 +272,10 @@ class Net(hk.Module):
       else:
         lstm_state = None
 
-      
       mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
           hint_preds=None, output_preds=None,
           hiddens=hiddens, lstm_state=lstm_state)            
         
-      # jax.debug.print("Carry: {}", 'innnn')  
       common_args = dict(
           hints=hints,
           repred=repred,
@@ -298,8 +292,7 @@ class Net(hk.Module):
           )
     
 
-      # if inference:     
-      if inference:
+      if inference and self.time_encoding:
         time_fts = time_fts.data[-2]#generate_time_steps_batch(time_steps_and_batch[1], time_steps_and_batch[0])
         
         time_fts = probing.DataPoint(
@@ -310,47 +303,39 @@ class Net(hk.Module):
         batch_size, nb_nodes, mp_state.lstm_state,
         self.spec[algorithm_index], self.encoders[algorithm_index], self.decoders[algorithm_index], repred, time_fts)
         
-        return output_preds_cand, output_preds_cand
-          # mp_state = self._msg_passing_step(mp_state, i=0, first_step=True, inference = inference, **common_args)
-          # jax.debug.print("Carry: {}", 'innnn')  
-          # return mp_state, mp_state
+        return output_preds_cand, hint_preds
     
-        
-      if not inference: 
-          mp_state, lean_mp_state = self._msg_passing_step(mp_state, i=0, first_step=True, inference = inference, **common_args)
+      mp_state, lean_mp_state = self._msg_passing_step(mp_state, i=0, first_step=True, **common_args)
             
-          scan_fn = functools.partial(
+      scan_fn = functools.partial(
               self._msg_passing_step,
               first_step=False,
               **common_args)
 
-
-          output_mp_state, accum_mp_state = hk.scan(
+      output_mp_state, accum_mp_state = hk.scan(
               scan_fn,
               mp_state,
               jnp.arange(nb_mp_steps - 1) + 1,
               length=nb_mp_steps - 1)
 
-          accum_mp_state = jax.tree_util.tree_map(
+    accum_mp_state = jax.tree_util.tree_map(
             lambda init, tail: jnp.concatenate([init[None], tail], axis=0),
             lean_mp_state, accum_mp_state)
 
-          def invert(d):
-            """Dict of lists -> list of dicts."""
-            if d:
-              return [dict(zip(d, i)) for i in zip(*d.values())]
+    def invert(d):
+      if d:
+        return [dict(zip(d, i)) for i in zip(*d.values())]
 
-
-          if return_all_outputs:
-            output_preds = {k: jnp.stack(v)
+    if return_all_outputs:
+        output_preds = {k: jnp.stack(v)
                           for k, v in accum_mp_state.output_preds.items()}
-          else:
-            output_preds = output_mp_state.output_preds
+    else:
+        output_preds = output_mp_state.output_preds
 
 
-          hint_preds = invert(accum_mp_state.hint_preds)
+    hint_preds = invert(accum_mp_state.hint_preds)
 
-          return output_preds, hint_preds
+    return output_preds, hint_preds
 
   def _construct_encoders_decoders(self):
     """Constructs encoders and decoders, separate for each algorithm."""
@@ -380,11 +365,13 @@ class Net(hk.Module):
               loc, t, hidden_dim=self.hidden_dim,
               nb_dims=self.nb_dims[algo_idx][name],
               name=f'algo_{algo_idx}_{name}')
-        
-      enc['time_linear_encoding'] = encoders.construct_encoders(
-                'hint', 'graph', 'scalar', hidden_dim=self.hidden_dim,
-                init=self.encoder_init,
-                name=f'algo_{algo_idx}_{name}')
+      
+      if self.time_encoding:
+          name = 'time_linear_encoding'
+          enc['time_linear_encoding'] = encoders.construct_encoders(
+                    'hint', 'graph', 'scalar', hidden_dim=self.hidden_dim,
+                    init=self.encoder_init,
+                    name=f'algo_{algo_idx}_{name}')
     
       encoders_.append(enc)
       decoders_.append(dec)
@@ -416,11 +403,9 @@ class Net(hk.Module):
     # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # Encode node/edge/graph features from inputs and (optionally) hints.
     trajectories = [inputs]
-    if time_fts_dp!=None:
+    if time_fts_dp is not None and self.time_encoding:
         trajectories.append([time_fts_dp])
-    
-    # print(hints)
-    # exit()
+  
     if self.encode_hints:
       trajectories.append(hints)
     
@@ -439,7 +424,10 @@ class Net(hk.Module):
           raise Exception(f'Failed to process {dp}') from e
 
     # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    nxt_hidden = hidden
+    if not self.time_encoding:
+        nxt_hidden = hidden
+    else:
+        nxt_hidden = None
     for _ in range(self.nb_msg_passing_steps):
       nxt_hidden, nxt_edge = self.processor(
           node_fts,
@@ -462,7 +450,11 @@ class Net(hk.Module):
     else:
       nxt_lstm_state = None
 
-    h_t = jnp.concatenate([node_fts, nxt_hidden], axis=-1) 
+    if self.time_encoding:
+      h_t = jnp.concatenate([node_fts, nxt_hidden], axis=-1) 
+    else:
+      h_t = jnp.concatenate([node_fts, hidden, nxt_hidden], axis=-1)
+
     
     if nxt_edge is not None:
       e_t = jnp.concatenate([edge_fts, nxt_edge], axis=-1)
@@ -758,10 +750,7 @@ def _expand_to(x: _Array, y: _Array) -> _Array:
 
 def _is_not_done_broadcast(lengths, i, tensor):
   is_not_done = (lengths > i + 1) * 1.0
-  # print('is_not_done', is_not_done, '**************************************************************************************')
   while len(is_not_done.shape) < len(tensor.shape):  # pytype: disable=attribute-error  # numpy-scalars
     is_not_done = jnp.expand_dims(is_not_done, -1)
-  # print('is_not_done', is_not_done, tensor, '**************************************************************************************')
-  # exit()
   
   return is_not_done

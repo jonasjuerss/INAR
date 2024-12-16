@@ -98,7 +98,6 @@ class GAT(Processor):
       name: str = 'gat_aggr',
       time_encoding_dim: int = 16,  # Dimensionality of time encoding
   ):
-    # print("****************************************************************************************")
     super().__init__(name=name)
     self.out_size = out_size
     self.nb_heads = nb_heads
@@ -108,16 +107,6 @@ class GAT(Processor):
     self.activation = activation
     self.residual = residual
     self.use_ln = use_ln
-    # self.time_encoding_dim = time_encoding_dim
-    
-    
-  # def positional_encoding(self, time: _Array, max_time: int = 1000):
-  #       """Generate sinusoidal positional encoding for time."""
-  #       time = jnp.expand_dims(time, axis=-1)  # [B, 1] -> [B, 1, 1]
-  #       i = jnp.arange(0, self.time_encoding_dim, 2)
-  #       angles = time * jnp.exp(-i * jnp.log(10000.0) / self.time_encoding_dim)  # [B, time_dim//2]
-  #       pos_encoding = jnp.concatenate([jnp.sin(angles), jnp.cos(angles)], axis=-1)  # [B, time_dim]
-  #       return pos_encoding  # [B, time_dim]
     
     
   def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
@@ -127,37 +116,33 @@ class GAT(Processor):
       graph_fts: _Array,
       adj_mat: _Array,
       hidden: _Array,
-      time_fts_dp:_Array,
+      time_fts_dp:_Array = None,
       # time: _Array,  # Time attribute
       **unused_kwargs,
   ) -> _Array:
     """GAT inference step."""
-    # print("*****************************************11111111111111111111111111***********************************************")
-    # print("****************************************************************************************", time_fts_dp.shape)
-    # exit()
-    
-    # time_fts_dp = time_fts_dp[:, jnp.newaxis, :]  # Shape: (2, 1, 2)  
+
     # time_fts_dp = jnp.tile(time_fts_dp, (1, node_fts.shape[1], 1))  # Shape: (2, 4, 2)
 
-    # time_pos_encoding = self.positional_encoding(time)  # [B, time_dim]
     b, n, _ = node_fts.shape
     assert edge_fts.shape[:-1] == (b, n, n)
     assert graph_fts.shape[:-1] == (b,)
     assert adj_mat.shape == (b, n, n)
 
-    # print(type(time_fts_dp))#.shape)
-    # print(type(node_fts))#.shape)
-    # exit()
     # z = jnp.concatenate([node_fts, hidden], axis=-1)
     # graph_fts = graph_fts + time_pos_encoding  # adding to graph features
     # z = jnp.concatenate([node_fts, time_fts_dp[..., None]], axis=-1)  # [B, N, F + time_dim]
     # z = jnp.concatenate((node_fts, time_fts_dp), axis=-1)  # Shape: (2, 4, 130)
-    z = node_fts#, time_fts_dp), axis=-1)  # Shape: (2, 4, 130)
+    
+    if hidden is not None:
+      z = jnp.concatenate([node_fts, hidden], axis=-1)
+      
+    else:
+      z = node_fts#, time_fts_dp), axis=-1)  # Shape: (2, 4, 130)
 
     
     # z = node_fts + time_fts_dp[:, jnp.newaxis, :]
     # time_fts_dp = jnp.repeat(time_fts_dp[:, jnp.newaxis, :], repeats=node_fts.shape[1], axis=1)
-    
     # z = jnp.concatenate((node_fts, time_fts_dp), axis=-1)  # Shape: (2, 4, 130)
     
     

@@ -206,18 +206,9 @@ def decode_fts(
   """Decodes node, edge and graph features."""
   output_preds = {}
   hint_preds = {}
-  # print(h_t.shape)
-  # print('-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000')
-
-  # print("decodersdecodersdecodersdecoders", decoders)
-  # for name in decoders:
-  #   print(name, spec[name], end = ' ')
-  # exit()
   for name in decoders:
     decoder = decoders[name]
-    # print('namenamenamenamename', name)
     stage, loc, t = spec[name]
-    # print(stage, loc, t)
     if loc == _Location.NODE:
       preds = _decode_node_fts(decoder, t, h_t, edge_fts, adj_mat,
                                inf_bias, repred)
@@ -242,20 +233,10 @@ def decode_fts(
 def _decode_node_fts(decoders, t: str, h_t: _Array, edge_fts: _Array,
                      adj_mat: _Array, inf_bias: bool, repred: bool) -> _Array:
   """Decodes node features."""
-  # print("***************************************************************")
-  # print(h_t)
   if t in [_Type.SCALAR, _Type.MASK, _Type.MASK_ONE]:
     preds = jnp.squeeze(decoders[0](h_t), -1)
-    # print("Type.SCALAR, _Type.MASK, _Type.MASK_ON pred", preds)
-    # print(preds.shape)
-    # print(preds.shape, decoders[0])
-    
   elif t == _Type.CATEGORICAL:
     preds = decoders[0](h_t)
-    # print("CATEGORICAL pred", preds)
-    # print(preds.shape, decoders[0])
-    # exit()
-    
   elif t in [_Type.POINTER, _Type.PERMUTATION_POINTER]: ###### doubt?decode_fts
     p_1 = decoders[0](h_t)
     p_2 = decoders[1](h_t)
@@ -322,7 +303,6 @@ def _decode_graph_fts(decoders, t: str, h_t: _Array,
                       graph_fts: _Array) -> _Array:
   """Decodes graph features."""
 
-  # print("hihihihihihihihihihihihihihihihi")
   gr_emb = jnp.max(h_t, axis=-2)
   pred_n = decoders[0](gr_emb)
   pred_g = decoders[1](graph_fts)

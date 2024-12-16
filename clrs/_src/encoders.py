@@ -33,11 +33,9 @@ def construct_encoders(stage: str, loc: str, t: str,
                        hidden_dim: int, init: str, name: str):
   """Constructs encoders."""
   if init == 'xavier_on_scalars' and stage == _Stage.HINT and t == _Type.SCALAR:
-    # print("---------------------------------------")
     initialiser = hk.initializers.TruncatedNormal(
         stddev=1.0 / jnp.sqrt(hidden_dim))
   elif init in ['default', 'xavier_on_scalars']:
-    # print("******************************")
     initialiser = None
   else:
     raise ValueError(f'Encoder initialiser {init} not supported.')
@@ -97,19 +95,16 @@ def accum_edge_fts(encoders, dp: _DataPoint, edge_fts: _Array) -> _Array:
   """Encodes and accumulates edge features."""
   if dp.location == _Location.NODE and dp.type_ in [_Type.POINTER,
                                                     _Type.PERMUTATION_POINTER]:
-    # print("in edge")
     encoding = _encode_inputs(encoders, dp)
     edge_fts += encoding
 
   elif dp.location == _Location.EDGE:
-    # print("in edge")
     encoding = _encode_inputs(encoders, dp)
     if dp.type_ == _Type.POINTER:
       # Aggregate pointer contributions across sender and receiver nodes.
       encoding_2 = encoders[1](jnp.expand_dims(dp.data, -1))
       edge_fts += jnp.mean(encoding, axis=1) + jnp.mean(encoding_2, axis=2)
     else:
-      # print("in edge")
       
       edge_fts += encoding
 
@@ -121,7 +116,6 @@ def accum_node_fts(encoders, dp: _DataPoint, node_fts: _Array) -> _Array:
   is_pointer = (dp.type_ in [_Type.POINTER, _Type.PERMUTATION_POINTER])
   if ((dp.location == _Location.NODE and not is_pointer) or
       (dp.location == _Location.GRAPH and dp.type_ == _Type.POINTER)):
-    # print("in node")
     encoding = _encode_inputs(encoders, dp)
     node_fts += encoding
 
@@ -134,10 +128,8 @@ def accum_graph_fts(encoders, dp: _DataPoint,
   encoding = None
   if dp.location == _Location.GRAPH and dp.type_ != _Type.POINTER:
     
-    # print("in graph")
     encoding = _encode_inputs(encoders, dp)
     graph_fts += encoding
-    # print(encoding.shape)
 
   return graph_fts, encoding
 
