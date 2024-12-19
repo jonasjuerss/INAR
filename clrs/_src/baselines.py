@@ -156,7 +156,9 @@ class BaselineModel(model.Model):
       name: str = 'base_model',
       nb_msg_passing_steps: int = 1,
       # process_hidden:bool = False,
-      time_encoding: bool = False,
+      time_encoding:bool = True,
+      positional_encoding: bool = True,
+      baseline: bool = False,
   ):
     """Constructor for BaselineModel.
 
@@ -211,13 +213,23 @@ class BaselineModel(model.Model):
       raise ValueError('`encode_hints=True`, `decode_hints=False` is invalid.')
 
     assert hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
-
+      
     self.decode_hints = decode_hints
+    
     self.checkpoint_path = checkpoint_path
     self.name = name
     self._freeze_processor = freeze_processor
-    # self.process_hidden = process_hidden
     self.time_encoding = time_encoding
+    self.positional_encoding = positional_encoding
+    self.baseline = baseline
+    
+    if baseline:
+      print('Setting encode_hints and decode_hints to False')
+      self.decode_hints = False
+      encode_hints = False
+      self.time_encoding = False
+      self.positional_encoding = False
+    
     
     if grad_clip_max_norm != 0.0:
       optax_chain = [optax.clip_by_global_norm(grad_clip_max_norm),
@@ -258,7 +270,7 @@ class BaselineModel(model.Model):
                       processor_factory, use_lstm, encoder_init,
                       dropout_prob, hint_teacher_forcing,
                       hint_repred_mode,
-                      self.nb_dims, self.nb_msg_passing_steps, self.time_encoding)(*args, **kwargs)
+                      self.nb_dims, self.nb_msg_passing_steps, self.time_encoding, self.positional_encoding, self.baseline)(*args, **kwargs)
 
     self.net_fn = hk.transform(_use_net)
     pmap_args = dict(axis_name='batch', devices=jax.local_devices())
@@ -417,7 +429,7 @@ class BaselineModel(model.Model):
           pred=output_preds[truth.name],
           nb_nodes=nb_nodes,
       )
-    
+
 
     # Optionally accumulate hint losses.
     if self.decode_hints:

@@ -31,7 +31,7 @@ import tensorflow as tf
 
 
 
-flags.DEFINE_list('algorithms', ['bfs', 'dfs'], 'Which algorithms to run.')
+flags.DEFINE_list('algorithms', ['dfs'], 'Which algorithms to run.')
 flags.DEFINE_list('train_lengths', ['4', '7', '11', '13', '16'],
                   'Which training sizes to use. A size of -1 means '
                   'use the benchmark dataset.')
@@ -56,8 +56,8 @@ flags.DEFINE_boolean('chunked_training', False,
 flags.DEFINE_integer('chunk_length', 16,
                      'Time chunk length used for training (if '
                      '`chunked_training` is True.')
-flags.DEFINE_integer('train_steps', 10000, 'Number of training iterations.')
-flags.DEFINE_integer('eval_every', 5000, 'Evaluation frequency (in steps).')
+flags.DEFINE_integer('train_steps', 5000, 'Number of training iterations.')
+flags.DEFINE_integer('eval_every', 50, 'Evaluation frequency (in steps).')
 flags.DEFINE_integer('test_every', 500, 'Evaluation frequency (in steps).')
 
 flags.DEFINE_integer('hidden_size', 128,
@@ -73,7 +73,7 @@ flags.DEFINE_float('hint_teacher_forcing', 0.0,
                    'Probability that ground-truth teacher hints are encoded '
                    'during training instead of predicted hints. Only '
                    'pertinent in encoded_decoded modes.')
-flags.DEFINE_enum('hint_mode', 'none',
+flags.DEFINE_enum('hint_mode', 'decoded_only',
                   ['encoded_decoded', 'decoded_only', 'none'],
                   'How should hints be used? Note, each mode defines a '
                   'separate task, with various difficulties. `encoded_decoded` '
@@ -105,7 +105,7 @@ flags.DEFINE_integer('nb_triplet_fts', 8,
 flags.DEFINE_enum('encoder_init', 'xavier_on_scalars',
                   ['default', 'xavier_on_scalars'],
                   'Initialiser to use for the encoders.')
-flags.DEFINE_enum('processor_type', 'gat',
+flags.DEFINE_enum('processor_type', 'triplet_gmpnn',
                   ['deepsets', 'mpnn', 'pgn', 'pgn_mask',
                    'triplet_mpnn', 'triplet_pgn', 'triplet_pgn_mask',
                    'gat', 'gatv2', 'gat_full', 'gatv2_full',
@@ -113,9 +113,9 @@ flags.DEFINE_enum('processor_type', 'gat',
                    'triplet_gpgn', 'triplet_gpgn_mask', 'triplet_gmpnn'],
                   'Processor type to use as the network P.')
 
-flags.DEFINE_string('checkpoint_path', '/tmp/CLRS30',
+flags.DEFINE_string('checkpoint_path', '/home/jovyan/graphhub-volume/n/n/inar/linear',
                     'Path in which checkpoints are saved.')
-flags.DEFINE_string('dataset_path', '/tmp/CLRS30',
+flags.DEFINE_string('dataset_path', '/home/jovyan/graphhub-volume/n/n/CLRS30/CLRS30',
                     'Path in which dataset is stored.')
 
 flags.DEFINE_boolean('freeze_processor', False,
@@ -123,10 +123,12 @@ flags.DEFINE_boolean('freeze_processor', False,
 
 
 ### additional arguments
-flags.DEFINE_boolean('time_encoding', False,
+flags.DEFINE_boolean('time_encoding', True,
                      'Whether to use the embeddings of time.')
-# flags.DEFINE_boolean('process_hidden', False,
-#                      'Whether to pass the previous hidden state to the processor.')
+flags.DEFINE_boolean('positional_encoding', False,
+                     'Whether to use the positional time encoding.')
+flags.DEFINE_boolean('baseline', False,
+                     'Whether to run baseline')
 
 FLAGS = flags.FLAGS
 
@@ -222,7 +224,7 @@ def make_sampler(length: int,
     num_samples = clrs.CLRS30[split]['num_samples'] * multiplier
     sampler, spec = clrs.build_sampler(
         algorithm,
-        seed=rng.randint(2**32, dtype=np.uint32),
+        seed=rng.randint(2**32),
         num_samples=num_samples,
         length=length,
         **sampler_kwargs,
@@ -423,7 +425,7 @@ def main(unused_argv):
   train_lengths = [int(x) for x in FLAGS.train_lengths]
 
   rng = np.random.RandomState(FLAGS.seed)
-  rng_key = jax.random.PRNGKey(rng.randint(2**32, dtype=np.uint32))
+  rng_key = jax.random.PRNGKey(rng.randint(2**32))
 
   # Create samplers
   (
@@ -465,6 +467,8 @@ def main(unused_argv):
       nb_msg_passing_steps=FLAGS.nb_msg_passing_steps,
       # process_hidden = FLAGS.process_hidden,
       time_encoding = FLAGS.time_encoding,
+      positional_encoding = FLAGS.positional_encoding,
+      baseline = FLAGS.baseline, 
       )
 
   eval_model = clrs.models.BaselineModel(

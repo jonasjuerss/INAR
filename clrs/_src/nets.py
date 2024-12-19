@@ -86,6 +86,8 @@ class Net(hk.Module):
       nb_dims=None,
       nb_msg_passing_steps=1, 
       time_encoding: bool = False,
+      positional_encoding: bool = False,
+      baseline:bool = False,
       name: str = 'net',
   ):
     """Constructs a `Net`."""
@@ -105,6 +107,8 @@ class Net(hk.Module):
     self.nb_msg_passing_steps = nb_msg_passing_steps
     # self.process_hidden = process_hidden
     self.time_encoding = time_encoding
+    self.positional_encoding = positional_encoding
+    self.baseline = baseline
     
   def _msg_passing_step(self,
                         mp_state: _MessagePassingScanState,
@@ -123,21 +127,7 @@ class Net(hk.Module):
                         return_hints: bool,
                         return_all_outputs: bool, 
                         ):   
-        
-#     if inference:
-#         cur_hint = []
-#         time_fts_dp = jnp.asarray(time_fts.data)[-2]
-#         time_fts_dp = probing.DataPoint(
-#                     name='time_linear_encoding', location=time_fts.location, type_=time_fts.type_, data=time_fts_dp)
-#         hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
-#         inputs, cur_hint, mp_state.hiddens,
-#         batch_size, nb_nodes, mp_state.lstm_state,
-#         spec, encs, decs, repred, time_fts_dp)
-#         return output_preds_cand
-        
-    
-
-        
+                
     if self.decode_hints and not first_step and not self.time_encoding:
       assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
       hard_postprocess = (self._hint_repred_mode == 'hard' or
@@ -183,8 +173,10 @@ class Net(hk.Module):
             probing.DataPoint(
                 name=hint.name, location=loc, type_=typ, data=hint_data))
 
-    time_fts_dp = jnp.asarray(time_fts.data)[i]
-    time_fts_dp = probing.DataPoint(
+    time_fts_dp = None
+    if time_fts:
+      time_fts_dp = jnp.asarray(time_fts.data)[i]
+      time_fts_dp = probing.DataPoint(
                 name='time_linear_encoding', location=time_fts.location, type_=time_fts.type_, data=time_fts_dp)
 
     hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
@@ -218,7 +210,6 @@ class Net(hk.Module):
     return new_mp_state, accum_mp_state
 
 
-
   def __call__(self, features_list: List[_Features], repred: bool,
                algorithm_index: int,
                return_hints: bool,
@@ -248,17 +239,32 @@ class Net(hk.Module):
       inputs = features.inputs
       hints = features.hints
       lengths = features.lengths
-      time_steps_and_batch = hints[-1].data.shape#[0]      
+      time_fts = None
+        
+      if self.time_encoding:
+        time_steps_and_batch = hints[-1].data.shape#[0]      
     
-      def generate_time_steps_batch(N, T):
+        def generate_time_steps_batch(N, T):
         # Create a batch of time steps where each sample gets T equally spaced steps
-        time_steps_batch = np.linspace(0, 1, T)  # Generate the time steps for a single sample
+          time_steps_batch = np.linspace(0, 1, T)  # Generate the time steps for a single sample
         # Reshape the array to have shape (T, N) where each column corresponds to one sample
-        return np.tile(time_steps_batch, (N, 1)).T  # Transpose to get (T, N)        
-          
-      time_fts = generate_time_steps_batch(time_steps_and_batch[1], time_steps_and_batch[0])  
-      time_fts = probing.DataPoint(
-                name='time_linear_encoding', location='graph', type_ = 'scalar', data=time_fts)
+          return np.tile(time_steps_batch, (N, 1)).T  # Transpose to get (T, N)  
+        time_fts = generate_time_steps_batch(time_steps_and_batch[1], time_steps_and_batch[0])  
+      
+        def preprocess_time_features(time: _Array, time_encoding_dim: int = 4) -> _Array:
+          """Generate sinusoidal positional encoding for time."""
+          time = jnp.expand_dims(time, axis=-1)  # [B, T] -> [B, T, 1]
+          i = jnp.arange(0, time_encoding_dim, 2)
+          angles = time * jnp.exp(-i * jnp.log(10000.0) / time_encoding_dim)  # [B, T, time_dim//2]
+          pos_encoding = jnp.concatenate([jnp.sin(angles), jnp.cos(angles)], axis=-1)  # [B, T, time_dim]
+          return pos_encoding  # [B, T, time_dim]
+    
+        time_dp_type = 'scalar'
+        if self.positional_encoding:
+          time_fts = preprocess_time_features(time_fts, time_encoding_dim=128)  # Shape [B, T, time_dim]        
+        
+        time_fts = probing.DataPoint(
+                name='time_linear_encoding', location='graph', type_ = time_dp_type, data=time_fts)
             
       batch_size, nb_nodes = _data_dimensions(features)
       nb_mp_steps = max(1, hints[0].data.shape[0] - 1) ### traj
@@ -292,17 +298,16 @@ class Net(hk.Module):
           )
     
 
-      if inference and self.time_encoding:
-        time_fts = time_fts.data[-2]#generate_time_steps_batch(time_steps_and_batch[1], time_steps_and_batch[0])
-        
-        time_fts = probing.DataPoint(
+      if inference and (self.time_encoding or self.baseline):
+        if self.time_encoding:
+          time_fts = time_fts.data[-2] 
+          time_fts = probing.DataPoint(
                 name='time_linear_encoding', location='graph', type_ = 'scalar', data=time_fts)
         cur_hint = []
         hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
         inputs, cur_hint, mp_state.hiddens,
         batch_size, nb_nodes, mp_state.lstm_state,
-        self.spec[algorithm_index], self.encoders[algorithm_index], self.decoders[algorithm_index], repred, time_fts)
-        
+        self.spec[algorithm_index], self.encoders[algorithm_index], self.decoders[algorithm_index], repred, time_fts)       
         return output_preds_cand, hint_preds
     
       mp_state, lean_mp_state = self._msg_passing_step(mp_state, i=0, first_step=True, **common_args)
@@ -368,7 +373,7 @@ class Net(hk.Module):
       
       if self.time_encoding:
           name = 'time_linear_encoding'
-          enc['time_linear_encoding'] = encoders.construct_encoders(
+          enc[name] = encoders.construct_encoders(
                     'hint', 'graph', 'scalar', hidden_dim=self.hidden_dim,
                     init=self.encoder_init,
                     name=f'algo_{algo_idx}_{name}')
@@ -403,7 +408,8 @@ class Net(hk.Module):
     # ENCODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     # Encode node/edge/graph features from inputs and (optionally) hints.
     trajectories = [inputs]
-    if time_fts_dp is not None and self.time_encoding:
+    
+    if time_fts_dp is not None: # and self.time_encoding:
         trajectories.append([time_fts_dp])
   
     if self.encode_hints:
@@ -419,15 +425,20 @@ class Net(hk.Module):
           encoder = encs[dp.name]
           edge_fts = encoders.accum_edge_fts(encoder, dp, edge_fts)
           node_fts = encoders.accum_node_fts(encoder, dp, node_fts)
+          # if dp.name == 'time_linear_encoding':
+          #   graph_fts+= dp.data
+          # else:
           graph_fts, encoding = encoders.accum_graph_fts(encoder, dp, graph_fts)
         except Exception as e:
           raise Exception(f'Failed to process {dp}') from e
 
     # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if not self.time_encoding:
+    if not self.time_encoding and not self.baseline:
         nxt_hidden = hidden
     else:
         nxt_hidden = None
+        
+        
     for _ in range(self.nb_msg_passing_steps):
       nxt_hidden, nxt_edge = self.processor(
           node_fts,
@@ -450,7 +461,7 @@ class Net(hk.Module):
     else:
       nxt_lstm_state = None
 
-    if self.time_encoding:
+    if self.time_encoding or self.baseline:
       h_t = jnp.concatenate([node_fts, nxt_hidden], axis=-1) 
     else:
       h_t = jnp.concatenate([node_fts, hidden, nxt_hidden], axis=-1)
