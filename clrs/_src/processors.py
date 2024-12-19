@@ -23,7 +23,18 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import numpy as np
+from clrs._src import probing
 
+import numpy as np
+_Array = chex.Array
+_DataPoint = probing.DataPoint
+# _Features = samplers.Features
+# _FeaturesChunked = samplers.FeaturesChunked
+# _Location = specs.Location
+# _Spec = specs.Spec
+# _Stage = specs.Stage
+# _Trajectory = samplers.Trajectory
+# _Type = specs.Type
 
 _Array = chex.Array
 _Fn = Callable[..., Any]
@@ -85,6 +96,7 @@ class GAT(Processor):
       residual: bool = True,
       use_ln: bool = False,
       name: str = 'gat_aggr',
+      time_encoding_dim: int = 16,  # Dimensionality of time encoding
   ):
     super().__init__(name=name)
     self.out_size = out_size
@@ -95,7 +107,8 @@ class GAT(Processor):
     self.activation = activation
     self.residual = residual
     self.use_ln = use_ln
-
+    
+    
   def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
       self,
       node_fts: _Array,
@@ -103,16 +116,31 @@ class GAT(Processor):
       graph_fts: _Array,
       adj_mat: _Array,
       hidden: _Array,
+      time_fts_dp:_Array = None,
+      # time: _Array,  # Time attribute
       **unused_kwargs,
   ) -> _Array:
     """GAT inference step."""
+
+    # time_fts_dp = jnp.tile(time_fts_dp, (1, node_fts.shape[1], 1))  # Shape: (2, 4, 2)
 
     b, n, _ = node_fts.shape
     assert edge_fts.shape[:-1] == (b, n, n)
     assert graph_fts.shape[:-1] == (b,)
     assert adj_mat.shape == (b, n, n)
 
-    z = jnp.concatenate([node_fts, hidden], axis=-1)
+    # z = jnp.concatenate([node_fts, hidden], axis=-1)
+    # graph_fts = graph_fts + time_pos_encoding  # adding to graph features
+    # z = jnp.concatenate([node_fts, time_fts_dp[..., None]], axis=-1)  # [B, N, F + time_dim]
+    # z = jnp.concatenate((node_fts, time_fts_dp), axis=-1)  # Shape: (2, 4, 130)
+
+    z = node_fts if hidden is None else jnp.concatenate([node_fts, hidden], axis=-1)
+    
+    # z = node_fts + time_fts_dp[:, jnp.newaxis, :]
+    # time_fts_dp = jnp.repeat(time_fts_dp[:, jnp.newaxis, :], repeats=node_fts.shape[1], axis=1)
+    # z = jnp.concatenate((node_fts, time_fts_dp), axis=-1)  # Shape: (2, 4, 130)
+    
+    
     m = hk.Linear(self.out_size)
     skip = hk.Linear(self.out_size)
 
@@ -216,7 +244,7 @@ class GATv2(Processor):
     assert graph_fts.shape[:-1] == (b,)
     assert adj_mat.shape == (b, n, n)
 
-    z = jnp.concatenate([node_fts, hidden], axis=-1)
+    z = node_fts if hidden is None else jnp.concatenate([node_fts, hidden], axis=-1)
     m = hk.Linear(self.out_size)
     skip = hk.Linear(self.out_size)
 
@@ -433,7 +461,13 @@ class PGN(Processor):
     assert graph_fts.shape[:-1] == (b,)
     assert adj_mat.shape == (b, n, n)
 
-    z = jnp.concatenate([node_fts, hidden], axis=-1)
+    if hidden is None:
+      if self.gated:
+        raise ValueError("hidden=None is not supported for gated=True")
+      z = node_fts
+    else:
+      z = jnp.concatenate([node_fts, hidden], axis=-1)
+
     m_1 = hk.Linear(self.mid_size)
     m_2 = hk.Linear(self.mid_size)
     m_e = hk.Linear(self.mid_size)
