@@ -113,9 +113,9 @@ flags.DEFINE_enum('processor_type', 'triplet_gmpnn',
                    'triplet_gpgn', 'triplet_gpgn_mask', 'triplet_gmpnn'],
                   'Processor type to use as the network P.')
 
-flags.DEFINE_string('checkpoint_path', '/home/jovyan/graphhub-volume/n/n/inar/linear',
+flags.DEFINE_string('checkpoint_path', '/tmp/CLRS30',
                     'Path in which checkpoints are saved.')
-flags.DEFINE_string('dataset_path', '/home/jovyan/graphhub-volume/n/n/CLRS30/CLRS30',
+flags.DEFINE_string('dataset_path', '/tmp/CLRS30',
                     'Path in which dataset is stored.')
 
 flags.DEFINE_boolean('freeze_processor', False,
