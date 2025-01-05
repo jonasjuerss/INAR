@@ -155,9 +155,8 @@ class BaselineModel(model.Model):
       hint_repred_mode: str = 'soft',
       name: str = 'base_model',
       nb_msg_passing_steps: int = 1,
-      # process_hidden:bool = False,
-      time_encoding:bool = True,
-      positional_encoding: bool = True,
+      time_encoding:bool = False,
+      positional_encoding: bool = False,
       baseline: bool = False,
   ):
     """Constructor for BaselineModel.
@@ -208,6 +207,15 @@ class BaselineModel(model.Model):
       ValueError: if `encode_hints=True` and `decode_hints=False`.
     """
     super(BaselineModel, self).__init__(spec=spec)
+    
+    
+    if baseline:
+      print('Setting encode_hints and decode_hints to False')
+      decode_hints = False
+      encode_hints = False
+      self.time_encoding = False
+      self.positional_encoding = False
+    
 
     if encode_hints and not decode_hints:
       raise ValueError('`encode_hints=True`, `decode_hints=False` is invalid.')
@@ -221,15 +229,7 @@ class BaselineModel(model.Model):
     self._freeze_processor = freeze_processor
     self.time_encoding = time_encoding
     self.positional_encoding = positional_encoding
-    self.baseline = baseline
-    
-    if baseline:
-      print('Setting encode_hints and decode_hints to False')
-      self.decode_hints = False
-      encode_hints = False
-      self.time_encoding = False
-      self.positional_encoding = False
-    
+    self.baseline = baseline  
     
     if grad_clip_max_norm != 0.0:
       optax_chain = [optax.clip_by_global_norm(grad_clip_max_norm),
