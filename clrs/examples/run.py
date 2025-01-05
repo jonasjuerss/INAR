@@ -30,8 +30,7 @@ import requests
 import tensorflow as tf
 
 
-
-flags.DEFINE_list('algorithms', ['dfs'], 'Which algorithms to run.')
+flags.DEFINE_list('algorithms', ['bfs'], 'Which algorithms to run.')
 flags.DEFINE_list('train_lengths', ['4', '7', '11', '13', '16'],
                   'Which training sizes to use. A size of -1 means '
                   'use the benchmark dataset.')
@@ -56,7 +55,7 @@ flags.DEFINE_boolean('chunked_training', False,
 flags.DEFINE_integer('chunk_length', 16,
                      'Time chunk length used for training (if '
                      '`chunked_training` is True.')
-flags.DEFINE_integer('train_steps', 5000, 'Number of training iterations.')
+flags.DEFINE_integer('train_steps', 10000, 'Number of training iterations.')
 flags.DEFINE_integer('eval_every', 50, 'Evaluation frequency (in steps).')
 flags.DEFINE_integer('test_every', 500, 'Evaluation frequency (in steps).')
 
@@ -73,7 +72,7 @@ flags.DEFINE_float('hint_teacher_forcing', 0.0,
                    'Probability that ground-truth teacher hints are encoded '
                    'during training instead of predicted hints. Only '
                    'pertinent in encoded_decoded modes.')
-flags.DEFINE_enum('hint_mode', 'decoded_only',
+flags.DEFINE_enum('hint_mode', 'encoded_decoded',
                   ['encoded_decoded', 'decoded_only', 'none'],
                   'How should hints be used? Note, each mode defines a '
                   'separate task, with various difficulties. `encoded_decoded` '
@@ -117,18 +116,19 @@ flags.DEFINE_string('checkpoint_path', '/tmp/CLRS30',
                     'Path in which checkpoints are saved.')
 flags.DEFINE_string('dataset_path', '/tmp/CLRS30',
                     'Path in which dataset is stored.')
-
 flags.DEFINE_boolean('freeze_processor', False,
                      'Whether to freeze the processor of the model.')
 
 
 ### additional arguments
-flags.DEFINE_boolean('time_encoding', True,
+flags.DEFINE_boolean('time_encoding', False,
                      'Whether to use the embeddings of time.')
 flags.DEFINE_boolean('positional_encoding', False,
                      'Whether to use the positional time encoding.')
 flags.DEFINE_boolean('baseline', False,
                      'Whether to run baseline')
+flags.DEFINE_boolean('gated', True,
+                     'whether to use the gated parameter for PGN networks')
 
 FLAGS = flags.FLAGS
 
@@ -224,7 +224,7 @@ def make_sampler(length: int,
     num_samples = clrs.CLRS30[split]['num_samples'] * multiplier
     sampler, spec = clrs.build_sampler(
         algorithm,
-        seed=rng.randint(2**32),
+        seed=rng.randint(2**32, dtype=np.uint32),
         num_samples=num_samples,
         length=length,
         **sampler_kwargs,
@@ -271,7 +271,7 @@ def collect_and_eval(sampler, predict_fn, sample_count, rng_key, extras):
     batch_size = feedback.outputs[0].data.shape[0]
     outputs.append(feedback.outputs)
     new_rng_key, rng_key = jax.random.split(rng_key)
-    cur_preds, _ = predict_fn(new_rng_key, feedback.features, inference = True)
+    cur_preds, _ = predict_fn(new_rng_key, feedback.features)
     preds.append(cur_preds)
     processed_samples += batch_size
   outputs = _concat(outputs, axis=0)
@@ -386,14 +386,13 @@ def create_samplers(
       val_sampler, val_samples, spec = make_multi_sampler(**val_args)
 
       test_args = dict(sizes=test_lengths or [-1],
-                           split='test',
-                           batch_size=test_batch_size,
-                           multiplier=2 * mult,
-                           randomize_pos=False,
-                           chunked=False,
-                           sampler_kwargs={},
-                           **common_sampler_args)
-    
+                       split='test',
+                       batch_size=test_batch_size,
+                       multiplier=2 * mult,
+                       randomize_pos=False,
+                       chunked=False,
+                       sampler_kwargs={},
+                       **common_sampler_args)
       test_sampler, test_samples, spec = make_multi_sampler(**test_args)
 
     spec_list.append(spec)
@@ -425,7 +424,7 @@ def main(unused_argv):
   train_lengths = [int(x) for x in FLAGS.train_lengths]
 
   rng = np.random.RandomState(FLAGS.seed)
-  rng_key = jax.random.PRNGKey(rng.randint(2**32))
+  rng_key = jax.random.PRNGKey(rng.randint(2**32, dtype=np.uint32))
 
   # Create samplers
   (
@@ -449,6 +448,8 @@ def main(unused_argv):
       use_ln=FLAGS.use_ln,
       nb_triplet_fts=FLAGS.nb_triplet_fts,
       nb_heads=FLAGS.nb_heads,
+      gated = FLAGS.gated,
+      
   )
   model_params = dict(
       processor_factory=processor_factory,
@@ -465,7 +466,6 @@ def main(unused_argv):
       hint_teacher_forcing=FLAGS.hint_teacher_forcing,
       hint_repred_mode=FLAGS.hint_repred_mode,
       nb_msg_passing_steps=FLAGS.nb_msg_passing_steps,
-      # process_hidden = FLAGS.process_hidden,
       time_encoding = FLAGS.time_encoding,
       positional_encoding = FLAGS.positional_encoding,
       baseline = FLAGS.baseline, 
@@ -476,8 +476,6 @@ def main(unused_argv):
       dummy_trajectory=[next(t) for t in val_samplers],
       **model_params
   )
-    
-  
   if FLAGS.chunked_training:
     train_model = clrs.models.BaselineModelChunked(
         spec=spec_list,
@@ -487,7 +485,6 @@ def main(unused_argv):
   else:
     train_model = eval_model
 
-  
   # Training loop.
   best_score = -1.0
   current_train_items = [0] * len(FLAGS.algorithms)
@@ -514,7 +511,7 @@ def main(unused_argv):
         train_model.init(all_length_features[:-1], FLAGS.seed + 1)
       else:
         train_model.init(all_features, FLAGS.seed + 1)
-    
+
     # Training step.
     for algo_idx in range(len(train_samplers)):
       feedback = feedback_list[algo_idx]
@@ -529,7 +526,7 @@ def main(unused_argv):
         length_and_algo_idx = algo_idx
       cur_loss = train_model.feedback(rng_key, feedback, length_and_algo_idx)
       rng_key = new_rng_key
-      
+
       if FLAGS.chunked_training:
         examples_in_chunk = np.sum(feedback.features.is_last).item()
       else:
@@ -558,7 +555,7 @@ def main(unused_argv):
         logging.info('(val) algo %s step %d: %s',
                      FLAGS.algorithms[algo_idx], step, val_stats)
         val_scores[algo_idx] = val_stats['score']
-        
+
       next_eval += FLAGS.eval_every
 
       # If best total score, update best checkpoint.
@@ -578,7 +575,7 @@ def main(unused_argv):
 
     step += 1
     length_idx = (length_idx + 1) % len(train_lengths)
-    
+
   logging.info('Restoring best model from checkpoint...')
   eval_model.restore_model('best.pkl', only_load_processor=False)
 
