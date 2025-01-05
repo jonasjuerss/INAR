@@ -31,7 +31,6 @@ from clrs._src import specs
 import haiku as hk
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 _Array = chex.Array
 _DataPoint = probing.DataPoint
@@ -105,7 +104,6 @@ class Net(hk.Module):
     self.use_lstm = use_lstm
     self.encoder_init = encoder_init
     self.nb_msg_passing_steps = nb_msg_passing_steps
-    # self.process_hidden = process_hidden
     self.time_encoding = time_encoding
     self.positional_encoding = positional_encoding
     self.baseline = baseline
@@ -146,8 +144,7 @@ class Net(hk.Module):
       cur_hint = []
       needs_noise = (self.decode_hints and not self.time_encoding and not first_step and
                      self._hint_teacher_forcing < 1.0)
-      # needs_noise = (self.decode_hints and not first_step and
-      #                self._hint_teacher_forcing < 1.0)
+      
       if needs_noise:
         force_mask = jax.random.bernoulli(
             hk.next_rng_key(), self._hint_teacher_forcing,
@@ -174,6 +171,7 @@ class Net(hk.Module):
                 name=hint.name, location=loc, type_=typ, data=hint_data))
 
     time_fts_dp = None
+    
     if time_fts:
       time_fts_dp = jnp.asarray(time_fts.data)[i]
       time_fts_dp = probing.DataPoint(
@@ -221,7 +219,6 @@ class Net(hk.Module):
       algorithm_indices = [algorithm_index]
     assert len(algorithm_indices) == len(features_list)
     
-    
     self.encoders, self.decoders = self._construct_encoders_decoders()
     self.processor = self.processor_factory(self.hidden_dim)
 
@@ -242,27 +239,25 @@ class Net(hk.Module):
       time_fts = None
         
       if self.time_encoding:
-        time_steps_and_batch = hints[-1].data.shape#[0]      
-    
-        def generate_time_steps_batch(N, T):
-        # Create a batch of time steps where each sample gets T equally spaced steps
-          time_steps_batch = np.linspace(0, 1, T)  # Generate the time steps for a single sample
-        # Reshape the array to have shape (T, N) where each column corresponds to one sample
-          return np.tile(time_steps_batch, (N, 1)).T  # Transpose to get (T, N)  
-        time_fts = generate_time_steps_batch(time_steps_and_batch[1], time_steps_and_batch[0])  
-      
-        def preprocess_time_features(time: _Array, time_encoding_dim: int = 4) -> _Array:
-          """Generate sinusoidal positional encoding for time."""
-          time = jnp.expand_dims(time, axis=-1)  # [B, T] -> [B, T, 1]
-          i = jnp.arange(0, time_encoding_dim, 2)
-          angles = time * jnp.exp(-i * jnp.log(10000.0) / time_encoding_dim)  # [B, T, time_dim//2]
-          pos_encoding = jnp.concatenate([jnp.sin(angles), jnp.cos(angles)], axis=-1)  # [B, T, time_dim]
-          return pos_encoding  # [B, T, time_dim]
-    
-        time_dp_type = 'scalar'
-        if self.positional_encoding:
-          time_fts = preprocess_time_features(time_fts, time_encoding_dim=128)  # Shape [B, T, time_dim]        
+        time_steps_and_batch = hints[-1].data.shape#[0]                    
         
+        def preprocess_time_features(batch_size, seq_len, d_model = 512):
+            
+          position = jnp.linspace(0, 1, seq_len)#[:, None]  # Generate the time steps for a single sample
+          if not self.positional_encoding:
+            return jnp.tile(position, (batch_size, 1)).T
+        
+          position= position[:,None]
+          # position = jnp.arange(0, seq_len)[:, None]  # Shape (seq_len, 1) ## T1 without this
+          div_term = jnp.exp(jnp.arange(0, d_model, 2) * -(jnp.log(10000.0) / d_model))  # Shape (d_model / 2,)
+          positional_encoding = jnp.zeros((seq_len, d_model))
+          positional_encoding = positional_encoding.at[:, 0::2].set(jnp.sin(position * div_term))  # Apply sin to even indices
+          positional_encoding = positional_encoding.at[:, 1::2].set(jnp.cos(position * div_term))  # Apply cos to odd indices
+            
+          return jnp.expand_dims(positional_encoding, axis=1).repeat(batch_size, axis=1)
+
+        time_dp_type = 'scalar'
+        time_fts = preprocess_time_features(time_steps_and_batch[1], time_steps_and_batch[0])
         time_fts = probing.DataPoint(
                 name='time_linear_encoding', location='graph', type_ = time_dp_type, data=time_fts)
             
