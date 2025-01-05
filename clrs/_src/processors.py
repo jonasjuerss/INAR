@@ -96,7 +96,6 @@ class GAT(Processor):
       residual: bool = True,
       use_ln: bool = False,
       name: str = 'gat_aggr',
-      time_encoding_dim: int = 16,  # Dimensionality of time encoding
   ):
     super().__init__(name=name)
     self.out_size = out_size
@@ -117,30 +116,17 @@ class GAT(Processor):
       adj_mat: _Array,
       hidden: _Array,
       time_fts_dp:_Array = None,
-      # time: _Array,  # Time attribute
       **unused_kwargs,
   ) -> _Array:
     """GAT inference step."""
-
-    # time_fts_dp = jnp.tile(time_fts_dp, (1, node_fts.shape[1], 1))  # Shape: (2, 4, 2)
 
     b, n, _ = node_fts.shape
     assert edge_fts.shape[:-1] == (b, n, n)
     assert graph_fts.shape[:-1] == (b,)
     assert adj_mat.shape == (b, n, n)
 
-    # z = jnp.concatenate([node_fts, hidden], axis=-1)
-    # graph_fts = graph_fts + time_pos_encoding  # adding to graph features
-    # z = jnp.concatenate([node_fts, time_fts_dp[..., None]], axis=-1)  # [B, N, F + time_dim]
-    # z = jnp.concatenate((node_fts, time_fts_dp), axis=-1)  # Shape: (2, 4, 130)
-
     z = node_fts if hidden is None else jnp.concatenate([node_fts, hidden], axis=-1)
-    
-    # z = node_fts + time_fts_dp[:, jnp.newaxis, :]
-    # time_fts_dp = jnp.repeat(time_fts_dp[:, jnp.newaxis, :], repeats=node_fts.shape[1], axis=1)
-    # z = jnp.concatenate((node_fts, time_fts_dp), axis=-1)  # Shape: (2, 4, 130)
-    
-    
+      
     m = hk.Linear(self.out_size)
     skip = hk.Linear(self.out_size)
 
@@ -462,6 +448,8 @@ class PGN(Processor):
     assert adj_mat.shape == (b, n, n)
 
     if hidden is None:
+      # print('setting gated to False as hidden is None')
+      # self.gated = False
       if self.gated:
         raise ValueError("hidden=None is not supported for gated=True")
       z = node_fts
@@ -769,7 +757,7 @@ ProcessorFactory = Callable[[int], Processor]
 def get_processor_factory(kind: str,
                           use_ln: bool,
                           nb_triplet_fts: int,
-                          nb_heads: Optional[int] = None) -> ProcessorFactory:
+                          nb_heads: Optional[int] = None, gated: bool = True) -> ProcessorFactory:
   """Returns a processor factory.
 
   Args:
@@ -881,7 +869,7 @@ def get_processor_factory(kind: str,
           use_ln=use_ln,
           use_triplets=False,
           nb_triplet_fts=nb_triplet_fts,
-          gated=True,
+          gated=gated,
       )
     elif kind == 'gpgn_mask':
       processor = PGNMask(
@@ -890,7 +878,7 @@ def get_processor_factory(kind: str,
           use_ln=use_ln,
           use_triplets=False,
           nb_triplet_fts=nb_triplet_fts,
-          gated=True,
+          gated=gated,
       )
     elif kind == 'gmpnn':
       processor = MPNN(
@@ -899,7 +887,7 @@ def get_processor_factory(kind: str,
           use_ln=use_ln,
           use_triplets=False,
           nb_triplet_fts=nb_triplet_fts,
-          gated=True,
+          gated=gated,
       )
     elif kind == 'triplet_gpgn':
       processor = PGN(
@@ -908,7 +896,7 @@ def get_processor_factory(kind: str,
           use_ln=use_ln,
           use_triplets=True,
           nb_triplet_fts=nb_triplet_fts,
-          gated=True,
+          gated=gated,
       )
     elif kind == 'triplet_gpgn_mask':
       processor = PGNMask(
@@ -917,7 +905,7 @@ def get_processor_factory(kind: str,
           use_ln=use_ln,
           use_triplets=True,
           nb_triplet_fts=nb_triplet_fts,
-          gated=True,
+          gated=gated,
       )
     elif kind == 'triplet_gmpnn':
       processor = MPNN(
@@ -926,7 +914,7 @@ def get_processor_factory(kind: str,
           use_ln=use_ln,
           use_triplets=True,
           nb_triplet_fts=nb_triplet_fts,
-          gated=True,
+          gated=gated,
       )
     else:
       raise ValueError('Unexpected processor kind ' + kind)
