@@ -66,6 +66,55 @@ class MessagePassingStateChunked:
   hiddens: chex.Array
   lstm_state: Optional[hk.LSTMState]
 
+# def preprocess_time_features(batch_size, seq_len, positional_encoding, d_model = 512):     
+#   """
+#   Args:
+#     batch_size: Batch size used for training
+#     seq_len: The length of the sequence (number of tokens)
+#     d_model: the desired dimensionality of the positional encoding
+#   Returns:
+#     A [seq_len, d_model] array containing the positional encoding for each token
+#   """
+#   position = jnp.linspace(0, 1, seq_len)#[:, None]  # Generate the time steps for a single sample
+#   if not positional_encoding:
+#     return jnp.tile(position, (batch_size, 1)).T
+        
+#   position= position[:,None]
+#   # position = jnp.arange(0, seq_len)[:, None]  # Shape (seq_len, 1) 
+#   div_term = jnp.exp(jnp.arange(0, d_model, 2) * -(jnp.log(10000.0) / d_model))  # Shape (d_model / 2,)
+#   positional_encoding = jnp.zeros((seq_len, d_model))
+#   positional_encoding = positional_encoding.at[:, 0::2].set(jnp.sin(position * div_term))  # Apply sin to even indices 
+#   positional_encoding = positional_encoding.at[:, 1::2].set(jnp.cos(position * div_term))  # Apply cos to odd indices
+#   return jnp.expand_dims(positional_encoding, axis=1).repeat(batch_size, axis=1)
+
+def preprocess_time_features(batch_size, T, positional_encoding, d_model=512, margin=0.2):
+    assert int((d_model // 2) ** 0.5) ** 2 * 2 == d_model, "d_model must be a perfect square times 2."
+
+    n_freqs = int((d_model // 2) ** 0.5)
+    width = 1 + 2 * margin
+
+    # Generate positions and normalize to [-0.2, 1.2]
+    positions = jnp.arange(0, T)[:, None]  # Shape: (T+1, 1)
+    positions = positions / T * (1 + 2 * margin) - margin  # Normalize to [-0.2, 1.2]
+
+    # Frequency grids for x and y
+    freqs_y = jnp.arange(n_freqs)
+    freqs_x = freqs_y[:, None]
+
+    # Compute frequency terms for periodic encoding
+    p_x = 2 * jnp.pi * freqs_x / width  # Shape: (n_freqs, n_freqs)
+    p_y = 2 * jnp.pi * freqs_y / width
+
+    # Compute position-based periodic embeddings
+    loc = positions[:, None, None] * (p_x + p_y.T) 
+
+    # Flatten and alternate sine and cosine components
+    loc = loc.reshape(T , -1)  # Shape: (T+1, n_freqs * n_freqs)
+    pe = jnp.zeros((T, d_model))  # Initialize encoding matrix
+    pe = pe.at[:, 0::2].set(jnp.sin(loc))  # Apply sine to even indices
+    pe = pe.at[:, 1::2].set(jnp.cos(loc))  # Apply cosine to odd indices
+
+    return pe
 
 class Net(hk.Module):
   """Building blocks (networks) used to encode and decode messages."""
@@ -104,6 +153,7 @@ class Net(hk.Module):
     self.use_lstm = use_lstm
     self.encoder_init = encoder_init
     self.nb_msg_passing_steps = nb_msg_passing_steps
+    # self.process_hidden = process_hidden
     self.time_encoding = time_encoding
     self.positional_encoding = positional_encoding
     self.baseline = baseline
@@ -144,7 +194,8 @@ class Net(hk.Module):
       cur_hint = []
       needs_noise = (self.decode_hints and not self.time_encoding and not first_step and
                      self._hint_teacher_forcing < 1.0)
-      
+      # needs_noise = (self.decode_hints and not first_step and
+      #                self._hint_teacher_forcing < 1.0)
       if needs_noise:
         force_mask = jax.random.bernoulli(
             hk.next_rng_key(), self._hint_teacher_forcing,
@@ -171,7 +222,6 @@ class Net(hk.Module):
                 name=hint.name, location=loc, type_=typ, data=hint_data))
 
     time_fts_dp = None
-    
     if time_fts:
       time_fts_dp = jnp.asarray(time_fts.data)[i]
       time_fts_dp = probing.DataPoint(
@@ -219,6 +269,7 @@ class Net(hk.Module):
       algorithm_indices = [algorithm_index]
     assert len(algorithm_indices) == len(features_list)
     
+    
     self.encoders, self.decoders = self._construct_encoders_decoders()
     self.processor = self.processor_factory(self.hidden_dim)
 
@@ -231,6 +282,14 @@ class Net(hk.Module):
     else:
       self.lstm = None
       lstm_init = lambda x: 0
+        
+    if transformers:
+      self.output_linear = functools.partial(
+      hk.Linear,
+      w_init=initialiser,
+      name='enc_hidden_output')
+    else:
+      self.output_linear = None
 
     for algorithm_index, features in zip(algorithm_indices, features_list):
       inputs = features.inputs
@@ -241,26 +300,12 @@ class Net(hk.Module):
       if self.time_encoding:
         time_steps_and_batch = hints[-1].data.shape#[0]                    
         
-        def preprocess_time_features(batch_size, seq_len, d_model = 512):
-            
-          position = jnp.linspace(0, 1, seq_len)#[:, None]  # Generate the time steps for a single sample
-          if not self.positional_encoding:
-            return jnp.tile(position, (batch_size, 1)).T
-        
-          position= position[:,None]
-          # position = jnp.arange(0, seq_len)[:, None]  # Shape (seq_len, 1) ## T1 without this
-          div_term = jnp.exp(jnp.arange(0, d_model, 2) * -(jnp.log(10000.0) / d_model))  # Shape (d_model / 2,)
-          positional_encoding = jnp.zeros((seq_len, d_model))
-          positional_encoding = positional_encoding.at[:, 0::2].set(jnp.sin(position * div_term))  # Apply sin to even indices
-          positional_encoding = positional_encoding.at[:, 1::2].set(jnp.cos(position * div_term))  # Apply cos to odd indices
-            
-          return jnp.expand_dims(positional_encoding, axis=1).repeat(batch_size, axis=1)
-
         time_dp_type = 'scalar'
-        time_fts = preprocess_time_features(time_steps_and_batch[1], time_steps_and_batch[0])
+        time_fts = preprocess_time_features(time_steps_and_batch[1], time_steps_and_batch[0], self.positional_encoding)
         time_fts = probing.DataPoint(
                 name='time_linear_encoding', location='graph', type_ = time_dp_type, data=time_fts)
-            
+        
+      
       batch_size, nb_nodes = _data_dimensions(features)
       nb_mp_steps = max(1, hints[0].data.shape[0] - 1) ### traj
       hiddens = jnp.zeros((batch_size, nb_nodes, self.hidden_dim)) #### 4, 4, 128
@@ -292,8 +337,7 @@ class Net(hk.Module):
           return_all_outputs=return_all_outputs,
           )
     
-
-      if inference and (self.time_encoding or self.baseline):
+      if (inference and self.time_encoding) or self.baseline:
         if self.time_encoding:
           time_fts = time_fts.data[-2] 
           time_fts = probing.DataPoint(
@@ -332,11 +376,11 @@ class Net(hk.Module):
     else:
         output_preds = output_mp_state.output_preds
 
-
     hint_preds = invert(accum_mp_state.hint_preds)
-
-    return output_preds, hint_preds
-
+   
+    return output_preds, hint_preds    
+        
+        
   def _construct_encoders_decoders(self):
     """Constructs encoders and decoders, separate for each algorithm."""
     encoders_ = []
