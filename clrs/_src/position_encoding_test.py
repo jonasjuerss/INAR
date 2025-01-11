@@ -2,7 +2,6 @@ import unittest
 
 import jax
 import jax.numpy as jnp
-import nets
 from clrs._src import nets
 from clrs._src.nets import preprocess_time_features
 
