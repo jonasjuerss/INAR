@@ -66,55 +66,55 @@ class MessagePassingStateChunked:
   hiddens: chex.Array
   lstm_state: Optional[hk.LSTMState]
 
-# def preprocess_time_features(batch_size, seq_len, positional_encoding, d_model = 512):     
-#   """
-#   Args:
-#     batch_size: Batch size used for training
-#     seq_len: The length of the sequence (number of tokens)
-#     d_model: the desired dimensionality of the positional encoding
-#   Returns:
-#     A [seq_len, d_model] array containing the positional encoding for each token
-#   """
-#   position = jnp.linspace(0, 1, seq_len)#[:, None]  # Generate the time steps for a single sample
-#   if not positional_encoding:
-#     return jnp.tile(position, (batch_size, 1)).T
+def preprocess_time_features(batch_size, seq_len, positional_encoding, d_model = 512):     
+  """
+  Args:
+    batch_size: Batch size used for training
+    seq_len: The length of the sequence (number of tokens)
+    d_model: the desired dimensionality of the positional encoding
+  Returns:
+    A [seq_len, d_model] array containing the positional encoding for each token
+  """
+  position = jnp.linspace(0, 1, seq_len)#[:, None]  # Generate the time steps for a single sample
+  if not positional_encoding:
+    return jnp.tile(position, (batch_size, 1)).T
         
-#   position= position[:,None]
-#   # position = jnp.arange(0, seq_len)[:, None]  # Shape (seq_len, 1) 
-#   div_term = jnp.exp(jnp.arange(0, d_model, 2) * -(jnp.log(10000.0) / d_model))  # Shape (d_model / 2,)
-#   positional_encoding = jnp.zeros((seq_len, d_model))
-#   positional_encoding = positional_encoding.at[:, 0::2].set(jnp.sin(position * div_term))  # Apply sin to even indices 
-#   positional_encoding = positional_encoding.at[:, 1::2].set(jnp.cos(position * div_term))  # Apply cos to odd indices
-#   return jnp.expand_dims(positional_encoding, axis=1).repeat(batch_size, axis=1)
+  position= position[:,None]
+  # position = jnp.arange(0, seq_len)[:, None]  # Shape (seq_len, 1) 
+  div_term = jnp.exp(jnp.arange(0, d_model, 2) * -(jnp.log(10000.0) / d_model))  # Shape (d_model / 2,)
+  positional_encoding = jnp.zeros((seq_len, d_model))
+  positional_encoding = positional_encoding.at[:, 0::2].set(jnp.sin(position * div_term))  # Apply sin to even indices 
+  positional_encoding = positional_encoding.at[:, 1::2].set(jnp.cos(position * div_term))  # Apply cos to odd indices
+  return jnp.expand_dims(positional_encoding, axis=1).repeat(batch_size, axis=1)
 
-def preprocess_time_features(batch_size, T, positional_encoding, d_model=512, margin=0.2):
-    assert int((d_model // 2) ** 0.5) ** 2 * 2 == d_model, "d_model must be a perfect square times 2."
+# def preprocess_time_features(batch_size, T, positional_encoding, d_model=512, margin=0.2):
+#     assert int((d_model // 2) ** 0.5) ** 2 * 2 == d_model, "d_model must be a perfect square times 2."
 
-    n_freqs = int((d_model // 2) ** 0.5)
-    width = 1 + 2 * margin
+#     n_freqs = int((d_model // 2) ** 0.5)
+#     width = 1 + 2 * margin
 
-    # Generate positions and normalize to [-0.2, 1.2]
-    positions = jnp.arange(0, T)[:, None]  # Shape: (T+1, 1)
-    positions = positions / T * (1 + 2 * margin) - margin  # Normalize to [-0.2, 1.2]
+#     # Generate positions and normalize to [-0.2, 1.2]
+#     positions = jnp.arange(0, T)[:, None]  # Shape: (T+1, 1)
+#     positions = positions / T * (1 + 2 * margin) - margin  # Normalize to [-0.2, 1.2]
 
-    # Frequency grids for x and y
-    freqs_y = jnp.arange(n_freqs)
-    freqs_x = freqs_y[:, None]
+#     # Frequency grids for x and y
+#     freqs_y = jnp.arange(n_freqs)
+#     freqs_x = freqs_y[:, None]
 
-    # Compute frequency terms for periodic encoding
-    p_x = 2 * jnp.pi * freqs_x / width  # Shape: (n_freqs, n_freqs)
-    p_y = 2 * jnp.pi * freqs_y / width
+#     # Compute frequency terms for periodic encoding
+#     p_x = 2 * jnp.pi * freqs_x / width  # Shape: (n_freqs, n_freqs)
+#     p_y = 2 * jnp.pi * freqs_y / width
 
-    # Compute position-based periodic embeddings
-    loc = positions[:, None, None] * (p_x + p_y.T) 
+#     # Compute position-based periodic embeddings
+#     loc = positions[:, None, None] * (p_x + p_y.T) 
 
-    # Flatten and alternate sine and cosine components
-    loc = loc.reshape(T , -1)  # Shape: (T+1, n_freqs * n_freqs)
-    pe = jnp.zeros((T, d_model))  # Initialize encoding matrix
-    pe = pe.at[:, 0::2].set(jnp.sin(loc))  # Apply sine to even indices
-    pe = pe.at[:, 1::2].set(jnp.cos(loc))  # Apply cosine to odd indices
+#     # Flatten and alternate sine and cosine components
+#     loc = loc.reshape(T , -1)  # Shape: (T+1, n_freqs * n_freqs)
+#     pe = jnp.zeros((T, d_model))  # Initialize encoding matrix
+#     pe = pe.at[:, 0::2].set(jnp.sin(loc))  # Apply sine to even indices
+#     pe = pe.at[:, 1::2].set(jnp.cos(loc))  # Apply cosine to odd indices
 
-    return pe
+#     return pe
 
 class Net(hk.Module):
   """Building blocks (networks) used to encode and decode messages."""
@@ -282,14 +282,6 @@ class Net(hk.Module):
     else:
       self.lstm = None
       lstm_init = lambda x: 0
-        
-    if transformers:
-      self.output_linear = functools.partial(
-      hk.Linear,
-      w_init=initialiser,
-      name='enc_hidden_output')
-    else:
-      self.output_linear = None
 
     for algorithm_index, features in zip(algorithm_indices, features_list):
       inputs = features.inputs
@@ -472,10 +464,7 @@ class Net(hk.Module):
           raise Exception(f'Failed to process {dp}') from e
 
     # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    if not self.time_encoding and not self.baseline:
-        nxt_hidden = hidden
-    else:
-        nxt_hidden = None
+    nxt_hidden = hidden
         
         
     for _ in range(self.nb_msg_passing_steps):
@@ -484,7 +473,7 @@ class Net(hk.Module):
           edge_fts,
           graph_fts,
           adj_mat,
-          nxt_hidden,
+          None if self.time_encoding or self.baseline else nxt_hidden,
           batch_size=batch_size,
           nb_nodes=nb_nodes,
           time_fts_dp = time_feats,
