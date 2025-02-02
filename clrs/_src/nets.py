@@ -48,7 +48,12 @@ class _MessagePassingScanState:
   hint_preds: chex.Array
   output_preds: chex.Array
   hiddens: chex.Array
+  # adj_mat:chex.Array
   lstm_state: Optional[hk.LSTMState]
+  edge_fts:chex.Array
+  adj:chex.Array
+
+  
 
 
 @chex.dataclass
@@ -66,7 +71,8 @@ class MessagePassingStateChunked:
   hiddens: chex.Array
   lstm_state: Optional[hk.LSTMState]
 
-def preprocess_time_features(batch_size, seq_len, positional_encoding, d_model = 512):     
+def preprocess_time_features(batch_size, seq_len, positional_encoding, d_model = 512):    
+    
   """
   Args:
     batch_size: Batch size used for training
@@ -75,7 +81,8 @@ def preprocess_time_features(batch_size, seq_len, positional_encoding, d_model =
   Returns:
     A [seq_len, d_model] array containing the positional encoding for each token
   """
-  position = jnp.linspace(0, 1, seq_len)#[:, None]  # Generate the time steps for a single sample
+
+  position = jnp.linspace(0, 1, seq_len)  # Generate the time steps for a single sample
   if not positional_encoding:
     return jnp.tile(position, (batch_size, 1)).T
         
@@ -87,27 +94,22 @@ def preprocess_time_features(batch_size, seq_len, positional_encoding, d_model =
   positional_encoding = positional_encoding.at[:, 1::2].set(jnp.cos(position * div_term))  # Apply cos to odd indices
   return jnp.expand_dims(positional_encoding, axis=1).repeat(batch_size, axis=1)
 
-# def preprocess_time_features(batch_size, T, positional_encoding, d_model=512, margin=0.2):
-#     assert int((d_model // 2) ** 0.5) ** 2 * 2 == d_model, "d_model must be a perfect square times 2."
 
+# def preprocess_time_features(batch_size, T, positional_encoding, d_model=512, margin=0.2):
+#     # assert int((d_model // 2) ** 0.5) ** 2 * 2 == d_model, "d_model must be a perfect square times 2."
 #     n_freqs = int((d_model // 2) ** 0.5)
 #     width = 1 + 2 * margin
-
 #     # Generate positions and normalize to [-0.2, 1.2]
 #     positions = jnp.arange(0, T)[:, None]  # Shape: (T+1, 1)
 #     positions = positions / T * (1 + 2 * margin) - margin  # Normalize to [-0.2, 1.2]
-
 #     # Frequency grids for x and y
 #     freqs_y = jnp.arange(n_freqs)
 #     freqs_x = freqs_y[:, None]
-
 #     # Compute frequency terms for periodic encoding
 #     p_x = 2 * jnp.pi * freqs_x / width  # Shape: (n_freqs, n_freqs)
 #     p_y = 2 * jnp.pi * freqs_y / width
-
 #     # Compute position-based periodic embeddings
 #     loc = positions[:, None, None] * (p_x + p_y.T) 
-
 #     # Flatten and alternate sine and cosine components
 #     loc = loc.reshape(T , -1)  # Shape: (T+1, n_freqs * n_freqs)
 #     pe = jnp.zeros((T, d_model))  # Initialize encoding matrix
@@ -136,6 +138,7 @@ class Net(hk.Module):
       time_encoding: bool = False,
       positional_encoding: bool = False,
       baseline:bool = False,
+      transformers:bool = False,
       name: str = 'net',
   ):
     """Constructs a `Net`."""
@@ -157,6 +160,7 @@ class Net(hk.Module):
     self.time_encoding = time_encoding
     self.positional_encoding = positional_encoding
     self.baseline = baseline
+    self.transformers = transformers
     
   def _msg_passing_step(self,
                         mp_state: _MessagePassingScanState,
@@ -194,8 +198,7 @@ class Net(hk.Module):
       cur_hint = []
       needs_noise = (self.decode_hints and not self.time_encoding and not first_step and
                      self._hint_teacher_forcing < 1.0)
-      # needs_noise = (self.decode_hints and not first_step and
-      #                self._hint_teacher_forcing < 1.0)
+  
       if needs_noise:
         force_mask = jax.random.bernoulli(
             hk.next_rng_key(), self._hint_teacher_forcing,
@@ -222,16 +225,17 @@ class Net(hk.Module):
                 name=hint.name, location=loc, type_=typ, data=hint_data))
 
     time_fts_dp = None
+    # e = mp_state.eee
     if time_fts:
       time_fts_dp = jnp.asarray(time_fts.data)[i]
       time_fts_dp = probing.DataPoint(
                 name='time_linear_encoding', location=time_fts.location, type_=time_fts.type_, data=time_fts_dp)
 
-    hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
+    hiddens, output_preds_cand, hint_preds, lstm_state, edge_feats, node_fts, org_edge_fts, graph_fts, adj_mat = self._one_step_pred(
         inputs, cur_hint, mp_state.hiddens,
         batch_size, nb_nodes, mp_state.lstm_state,
         spec, encs, decs, repred, time_fts_dp)
-
+    
     if first_step:
       output_preds = output_preds_cand
 
@@ -241,21 +245,23 @@ class Net(hk.Module):
         is_not_done = _is_not_done_broadcast(lengths, i,output_preds_cand[outp])
         is_not_done = is_not_done+0
         output_preds[outp] = is_not_done * output_preds_cand[outp] + (1.0 - is_not_done) * mp_state.output_preds[outp]
-
+        
     new_mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
         hint_preds=hint_preds,
         output_preds=output_preds,
         hiddens=hiddens,
-        lstm_state=lstm_state)
-
+        lstm_state=lstm_state, edge_fts=jax.lax.stop_gradient(edge_feats), adj = jax.lax.stop_gradient(adj_mat))
+    
+    # Save memory by not stacking unnecessary fields
     accum_mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
         hint_preds=hint_preds if return_hints else None,
         output_preds=output_preds if return_all_outputs else None,
-        hiddens=None, lstm_state=None)
+        hiddens=hiddens, lstm_state=None, edge_fts=jax.lax.stop_gradient(edge_feats), adj = None)
+
 
     # Complying to jax.scan, the first returned value is the state we carry over
     # the second value is the output that will be stacked over steps.
-    return new_mp_state, accum_mp_state
+    return new_mp_state, accum_mp_state#, adj_mat, 
 
 
   def __call__(self, features_list: List[_Features], repred: bool,
@@ -270,8 +276,10 @@ class Net(hk.Module):
     assert len(algorithm_indices) == len(features_list)
     
     
-    self.encoders, self.decoders = self._construct_encoders_decoders()
+    self.encoders, self.decoders, self.out_decoders = self._construct_encoders_decoders()
     self.processor = self.processor_factory(self.hidden_dim)
+    self.final_processor = self.processor_factory(self.hidden_dim)
+    
 
     # Optionally construct LSTM.
     if self.use_lstm:
@@ -283,6 +291,12 @@ class Net(hk.Module):
       self.lstm = None
       lstm_init = lambda x: 0
 
+    output_preds = None
+    outputs = None
+    output_mp_state = None
+    accum_mp_state = None
+    hint_preds = None
+    adj = None
     for algorithm_index, features in zip(algorithm_indices, features_list):
       inputs = features.inputs
       hints = features.hints
@@ -297,10 +311,10 @@ class Net(hk.Module):
         time_fts = probing.DataPoint(
                 name='time_linear_encoding', location='graph', type_ = time_dp_type, data=time_fts)
         
-      
       batch_size, nb_nodes = _data_dimensions(features)
       nb_mp_steps = max(1, hints[0].data.shape[0] - 1) ### traj
       hiddens = jnp.zeros((batch_size, nb_nodes, self.hidden_dim)) #### 4, 4, 128
+      edge_feat = jnp.zeros((batch_size, nb_nodes, nb_nodes, self.hidden_dim)) #### 4, 4, 128
 
       if self.use_lstm:
         lstm_state = lstm_init(batch_size * nb_nodes)
@@ -312,7 +326,7 @@ class Net(hk.Module):
 
       mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
           hint_preds=None, output_preds=None,
-          hiddens=hiddens, lstm_state=lstm_state)            
+          hiddens=hiddens, lstm_state=lstm_state, edge_fts=None, adj = None)            
         
       common_args = dict(
           hints=hints,
@@ -329,7 +343,7 @@ class Net(hk.Module):
           return_all_outputs=return_all_outputs,
           )
     
-      if (inference and self.time_encoding) or self.baseline:
+      if self.baseline:
         if self.time_encoding:
           time_fts = time_fts.data[-2] 
           time_fts = probing.DataPoint(
@@ -339,28 +353,39 @@ class Net(hk.Module):
         inputs, cur_hint, mp_state.hiddens,
         batch_size, nb_nodes, mp_state.lstm_state,
         self.spec[algorithm_index], self.encoders[algorithm_index], self.decoders[algorithm_index], repred, time_fts)       
-        return output_preds_cand, hint_preds
+        # return output_preds_cand, hint_preds
     
-      mp_state, lean_mp_state = self._msg_passing_step(mp_state, i=0, first_step=True, **common_args)
-            
-      scan_fn = functools.partial(
+      else:
+        mp_state, lean_mp_state = self._msg_passing_step(mp_state, i=0, first_step=True, **common_args)
+        
+        scan_fn = functools.partial(
               self._msg_passing_step,
               first_step=False,
               **common_args)
 
-      output_mp_state, accum_mp_state = hk.scan(
+        output_mp_state, accum_mp_state = hk.scan(
               scan_fn,
               mp_state,
               jnp.arange(nb_mp_steps - 1) + 1,
               length=nb_mp_steps - 1)
-
-    accum_mp_state = jax.tree_util.tree_map(
+        
+        accum_mp_state = jax.tree_util.tree_map(
             lambda init, tail: jnp.concatenate([init[None], tail], axis=0),
             lean_mp_state, accum_mp_state)
-
-    def invert(d):
-      if d:
-        return [dict(zip(d, i)) for i in zip(*d.values())]
+              
+        def invert(d):
+          if d:
+            return [dict(zip(d, i)) for i in zip(*d.values())]
+    
+        hint_preds = invert(accum_mp_state.hint_preds)
+        hidden = accum_mp_state.hiddens
+        edge_fts = accum_mp_state.edge_fts
+        hidden = jnp.transpose(hidden, (1, 2, 0, 3))
+        edge_fts = jnp.transpose(edge_fts, (1, 2, 3, 0, 4))
+        adj = output_mp_state.adj
+    
+        if self.transformers:
+          outputs = self.new_gnn(hidden, edge_fts, adj, self.out_decoders[algorithm_index], batch_size,nb_nodes, self.spec[algorithm_index])
 
     if return_all_outputs:
         output_preds = {k: jnp.stack(v)
@@ -368,19 +393,63 @@ class Net(hk.Module):
     else:
         output_preds = output_mp_state.output_preds
 
-    hint_preds = invert(accum_mp_state.hint_preds)
-   
+
+    if self.transformers or self.baseline:
+      output_preds = outputs
+    
     return output_preds, hint_preds    
+
+
+  def new_gnn(self,node_fts, edge_fts, adj_mat, decs,batch_size,nb_nodes, spec: _Spec):
         
+    node_fts = jnp.mean(node_fts, axis=2) 
+    edge_fts = jnp.mean(edge_fts, axis=-2) 
+    graph_fts = jnp.zeros((batch_size, self.hidden_dim))
+    
+    nxt_hidden = None
+    
+    for _ in range(self.nb_msg_passing_steps):
+      nxt_hidden, nxt_edge = self.final_processor(
+          node_fts,
+          edge_fts,
+          graph_fts, #graph_fts
+          adj_mat, 
+          nxt_hidden,
+          batch_size=batch_size,
+          nb_nodes=nb_nodes,
+      )
+    
+    h_t = jnp.concatenate([node_fts, nxt_hidden], axis=-1)     
+    e_t = jnp.concatenate([edge_fts, nxt_edge], axis=-1)
+    output_preds = {}
+    output_preds['pi'] = jnp.zeros((batch_size, nb_nodes, nb_nodes))
+    # DECODE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    # Decode features and (optionally) hints.
+    hint_preds, output_preds = decoders.decode_fts(
+        decoders=decs,
+        h_t=h_t,
+        adj_mat=adj_mat,
+        edge_fts=e_t,
+        graph_fts=None,
+        inf_bias=self.processor.inf_bias,
+        inf_bias_edge=self.processor.inf_bias_edge,
+        repred=False,
+        spec = spec,
+    )        
+    
+    return output_preds
+
         
   def _construct_encoders_decoders(self):
     """Constructs encoders and decoders, separate for each algorithm."""
     encoders_ = []
     decoders_ = []
+    out_decoders_ = []
     enc_algo_idx = None
     for (algo_idx, spec) in enumerate(self.spec):
       enc = {}
       dec = {}
+      out_dec = {}
       for name, (stage, loc, t) in spec.items():
         if stage == _Stage.INPUT or (
             stage == _Stage.HINT and self.encode_hints):
@@ -401,18 +470,29 @@ class Net(hk.Module):
               loc, t, hidden_dim=self.hidden_dim,
               nb_dims=self.nb_dims[algo_idx][name],
               name=f'algo_{algo_idx}_{name}')
+        
+        if self.transformers:
+          if stage == _Stage.OUTPUT:
+            if loc == _Location.NODE:
+                # name_out = f'out_{name}'
+                out_dec[name] =  decoders.construct_decoders(
+                loc, t, hidden_dim=self.hidden_dim,
+                nb_dims=self.nb_dims[algo_idx][name],
+                name=f'final_out_{algo_idx}_{name}')
       
       if self.time_encoding:
-          name = 'time_linear_encoding'
-          enc[name] = encoders.construct_encoders(
+        name = 'time_linear_encoding'
+        enc[name] = encoders.construct_encoders(
                     'hint', 'graph', 'scalar', hidden_dim=self.hidden_dim,
                     init=self.encoder_init,
                     name=f'algo_{algo_idx}_{name}')
+      
     
       encoders_.append(enc)
       decoders_.append(dec)
- 
-    return encoders_, decoders_
+      out_decoders_.append(out_dec)
+    
+    return encoders_, decoders_, out_decoders_
 
   def _one_step_pred(
       self,
@@ -445,7 +525,8 @@ class Net(hk.Module):
   
     if self.encode_hints:
       trajectories.append(hints)
-    
+  
+
     time_feats = None
     for trajectory in trajectories:
       for dp in trajectory:
@@ -465,7 +546,6 @@ class Net(hk.Module):
 
     # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     nxt_hidden = hidden
-        
         
     for _ in range(self.nb_msg_passing_steps):
       nxt_hidden, nxt_edge = self.processor(
@@ -493,7 +573,6 @@ class Net(hk.Module):
       h_t = jnp.concatenate([node_fts, nxt_hidden], axis=-1) 
     else:
       h_t = jnp.concatenate([node_fts, hidden, nxt_hidden], axis=-1)
-
     
     if nxt_edge is not None:
       e_t = jnp.concatenate([edge_fts, nxt_edge], axis=-1)
@@ -514,7 +593,7 @@ class Net(hk.Module):
         repred=repred,
     )
     
-    return nxt_hidden, output_preds, hint_preds, nxt_lstm_state
+    return nxt_hidden, output_preds, hint_preds, nxt_lstm_state, e_t, node_fts, edge_fts, graph_fts, adj_mat
 
 
 class NetChunked(Net):

@@ -158,6 +158,7 @@ class BaselineModel(model.Model):
       time_encoding:bool = False,
       positional_encoding: bool = False,
       baseline: bool = False,
+      transformers:bool = False,
   ):
     """Constructor for BaselineModel.
 
@@ -230,6 +231,7 @@ class BaselineModel(model.Model):
     self.time_encoding = time_encoding
     self.positional_encoding = positional_encoding
     self.baseline = baseline  
+    self.transformers = transformers
     
     if grad_clip_max_norm != 0.0:
       optax_chain = [optax.clip_by_global_norm(grad_clip_max_norm),
@@ -270,7 +272,7 @@ class BaselineModel(model.Model):
                       processor_factory, use_lstm, encoder_init,
                       dropout_prob, hint_teacher_forcing,
                       hint_repred_mode,
-                      self.nb_dims, self.nb_msg_passing_steps, self.time_encoding, self.positional_encoding, self.baseline)(*args, **kwargs)
+                      self.nb_dims, self.nb_msg_passing_steps, self.time_encoding, self.positional_encoding, self.baseline, self.transformers)(*args, **kwargs)
 
     self.net_fn = hk.transform(_use_net)
     pmap_args = dict(axis_name='batch', devices=jax.local_devices())

@@ -28,13 +28,6 @@ from clrs._src import probing
 import numpy as np
 _Array = chex.Array
 _DataPoint = probing.DataPoint
-# _Features = samplers.Features
-# _FeaturesChunked = samplers.FeaturesChunked
-# _Location = specs.Location
-# _Spec = specs.Spec
-# _Stage = specs.Stage
-# _Trajectory = samplers.Trajectory
-# _Type = specs.Type
 
 _Array = chex.Array
 _Fn = Callable[..., Any]
@@ -448,8 +441,6 @@ class PGN(Processor):
     assert adj_mat.shape == (b, n, n)
 
     if hidden is None:
-      # print('setting gated to False as hidden is None')
-      # self.gated = False
       if self.gated:
         raise ValueError("hidden=None is not supported for gated=True")
       z = node_fts

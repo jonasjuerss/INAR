@@ -30,7 +30,8 @@ import requests
 import tensorflow as tf
 
 
-flags.DEFINE_list('algorithms', ['bfs'], 'Which algorithms to run.')
+
+flags.DEFINE_list('algorithms', ['insertion_sort'], 'Which algorithms to run.')
 flags.DEFINE_list('train_lengths', ['4', '7', '11', '13', '16'],
                   'Which training sizes to use. A size of -1 means '
                   'use the benchmark dataset.')
@@ -72,8 +73,8 @@ flags.DEFINE_float('hint_teacher_forcing', 0.0,
                    'Probability that ground-truth teacher hints are encoded '
                    'during training instead of predicted hints. Only '
                    'pertinent in encoded_decoded modes.')
-flags.DEFINE_enum('hint_mode', 'encoded_decoded',
-                  ['encoded_decoded', 'decoded_only', 'none'],
+flags.DEFINE_enum('hint_mode', 'decoded_only',
+                  ['encoded_decoded', 'decoded_only', 'none'], ### none for t1
                   'How should hints be used? Note, each mode defines a '
                   'separate task, with various difficulties. `encoded_decoded` '
                   'requires the model to explicitly materialise hint sequences '
@@ -112,12 +113,15 @@ flags.DEFINE_enum('processor_type', 'triplet_gmpnn',
                    'triplet_gpgn', 'triplet_gpgn_mask', 'triplet_gmpnn'],
                   'Processor type to use as the network P.')
 
-flags.DEFINE_string('checkpoint_path', '/tmp/CLRS30',
+
+flags.DEFINE_string('checkpoint_path', '/home/jovyan/graphhub-volume/n_n1/n/bs1',
                     'Path in which checkpoints are saved.')
-flags.DEFINE_string('dataset_path', '/tmp/CLRS30',
+flags.DEFINE_string('dataset_path', '/home/jovyan/graphhub-volume/n_n1/n/CLRS30/CLRS30/',
                     'Path in which dataset is stored.')
 flags.DEFINE_boolean('freeze_processor', False,
                      'Whether to freeze the processor of the model.')
+
+
 
 
 ### additional arguments
@@ -129,6 +133,9 @@ flags.DEFINE_boolean('baseline', False,
                      'Whether to run baseline')
 flags.DEFINE_boolean('gated', True,
                      'whether to use the gated parameter for PGN networks')
+
+flags.DEFINE_boolean('transformers', False,
+                     'whether to use the transformers/mlp model to predict final output')
 
 FLAGS = flags.FLAGS
 
@@ -466,10 +473,13 @@ def main(unused_argv):
       hint_teacher_forcing=FLAGS.hint_teacher_forcing,
       hint_repred_mode=FLAGS.hint_repred_mode,
       nb_msg_passing_steps=FLAGS.nb_msg_passing_steps,
+      # process_hidden = FLAGS.process_hidden,
       time_encoding = FLAGS.time_encoding,
       positional_encoding = FLAGS.positional_encoding,
       baseline = FLAGS.baseline, 
+      transformers= FLAGS.transformers,
       )
+
 
   eval_model = clrs.models.BaselineModel(
       spec=spec_list,

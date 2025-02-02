@@ -28,10 +28,11 @@ _Spec = specs.Spec
 _Stage = specs.Stage
 _Type = specs.Type
 
-
+    
 def construct_encoders(stage: str, loc: str, t: str,
                        hidden_dim: int, init: str, name: str):
   """Constructs encoders."""
+  
   if init == 'xavier_on_scalars' and stage == _Stage.HINT and t == _Type.SCALAR:
     initialiser = hk.initializers.TruncatedNormal(
         stddev=1.0 / jnp.sqrt(hidden_dim))
@@ -87,6 +88,7 @@ def accum_adj_mat(dp: _DataPoint, adj_mat: _Array) -> _Array:
   if dp.location == _Location.NODE and dp.type_ in [_Type.POINTER,
                                                     _Type.PERMUTATION_POINTER]:
     adj_mat += ((dp.data + jnp.transpose(dp.data, (0, 2, 1))) > 0.5)
+    
   elif dp.location == _Location.EDGE and dp.type_ == _Type.MASK:
     adj_mat += ((dp.data + jnp.transpose(dp.data, (0, 2, 1))) > 0.0)
 
@@ -131,7 +133,6 @@ def accum_graph_fts(encoders, dp: _DataPoint,
   if dp.location == _Location.GRAPH and dp.type_ != _Type.POINTER:
     encoding = _encode_inputs(encoders, dp)
     graph_fts += encoding
-
   return graph_fts, encoding
 
 
