@@ -767,7 +767,7 @@ class NetChunked(Net):
     assert len(algorithm_indices) == len(features_list)
     assert len(algorithm_indices) == len(mp_state_list)
 
-    self.encoders, self.decoders = self._construct_encoders_decoders()
+    self.encoders, self.decoders, _ = self._construct_encoders_decoders()
     self.processor = self.processor_factory(self.hidden_dim)
     # Optionally construct LSTM.
     if self.use_lstm:
