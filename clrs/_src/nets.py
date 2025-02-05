@@ -238,10 +238,11 @@ class Net(hk.Module):
     else:
       output_preds = {}
       for outp in mp_state.output_preds:
-        is_not_done = _is_not_done_broadcast(lengths, i,output_preds_cand[outp])
-        is_not_done = is_not_done+0
-        output_preds[outp] = is_not_done * output_preds_cand[outp] + (1.0 - is_not_done) * mp_state.output_preds[outp]
-
+        is_not_done = _is_not_done_broadcast(lengths, i,
+                                             output_preds_cand[outp])
+        output_preds[outp] = is_not_done * output_preds_cand[outp] + (
+            1.0 - is_not_done) * mp_state.output_preds[outp]
+            
     new_mp_state = _MessagePassingScanState(  # pytype: disable=wrong-arg-types  # numpy-scalars
         hint_preds=hint_preds,
         output_preds=output_preds,
@@ -339,16 +340,18 @@ class Net(hk.Module):
         inputs, cur_hint, mp_state.hiddens,
         batch_size, nb_nodes, mp_state.lstm_state,
         self.spec[algorithm_index], self.encoders[algorithm_index], self.decoders[algorithm_index], repred, time_fts)       
-        return output_preds_cand, hint_preds
+        # return output_preds_cand, hint_preds
+
+      else:
     
-      mp_state, lean_mp_state = self._msg_passing_step(mp_state, i=0, first_step=True, **common_args)
+        mp_state, lean_mp_state = self._msg_passing_step(mp_state, i=0, first_step=True, **common_args)
             
-      scan_fn = functools.partial(
+        scan_fn = functools.partial(
               self._msg_passing_step,
               first_step=False,
               **common_args)
 
-      output_mp_state, accum_mp_state = hk.scan(
+        output_mp_state, accum_mp_state = hk.scan(
               scan_fn,
               mp_state,
               jnp.arange(nb_mp_steps - 1) + 1,
@@ -367,6 +370,9 @@ class Net(hk.Module):
                           for k, v in accum_mp_state.output_preds.items()}
     else:
         output_preds = output_mp_state.output_preds
+
+    if inference and self.time_encoding:
+      output_preds = output_preds_cand
 
     hint_preds = invert(accum_mp_state.hint_preds)
    
