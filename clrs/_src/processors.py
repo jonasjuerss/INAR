@@ -23,7 +23,18 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import numpy as np
+from clrs._src import probing
 
+import numpy as np
+_Array = chex.Array
+_DataPoint = probing.DataPoint
+# _Features = samplers.Features
+# _FeaturesChunked = samplers.FeaturesChunked
+# _Location = specs.Location
+# _Spec = specs.Spec
+# _Stage = specs.Stage
+# _Trajectory = samplers.Trajectory
+# _Type = specs.Type
 
 _Array = chex.Array
 _Fn = Callable[..., Any]
@@ -95,7 +106,8 @@ class GAT(Processor):
     self.activation = activation
     self.residual = residual
     self.use_ln = use_ln
-
+    
+    
   def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
       self,
       node_fts: _Array,
@@ -103,6 +115,7 @@ class GAT(Processor):
       graph_fts: _Array,
       adj_mat: _Array,
       hidden: _Array,
+      time_fts_dp:_Array = None,
       **unused_kwargs,
   ) -> _Array:
     """GAT inference step."""
@@ -112,7 +125,8 @@ class GAT(Processor):
     assert graph_fts.shape[:-1] == (b,)
     assert adj_mat.shape == (b, n, n)
 
-    z = jnp.concatenate([node_fts, hidden], axis=-1)
+    z = node_fts if hidden is None else jnp.concatenate([node_fts, hidden], axis=-1)
+      
     m = hk.Linear(self.out_size)
     skip = hk.Linear(self.out_size)
 
@@ -216,7 +230,7 @@ class GATv2(Processor):
     assert graph_fts.shape[:-1] == (b,)
     assert adj_mat.shape == (b, n, n)
 
-    z = jnp.concatenate([node_fts, hidden], axis=-1)
+    z = node_fts if hidden is None else jnp.concatenate([node_fts, hidden], axis=-1)
     m = hk.Linear(self.out_size)
     skip = hk.Linear(self.out_size)
 
@@ -433,7 +447,15 @@ class PGN(Processor):
     assert graph_fts.shape[:-1] == (b,)
     assert adj_mat.shape == (b, n, n)
 
-    z = jnp.concatenate([node_fts, hidden], axis=-1)
+    if hidden is None:
+      # print('setting gated to False as hidden is None')
+      # self.gated = False
+      if self.gated:
+        raise ValueError("hidden=None is not supported for gated=True")
+      z = node_fts
+    else:
+      z = jnp.concatenate([node_fts, hidden], axis=-1)
+
     m_1 = hk.Linear(self.mid_size)
     m_2 = hk.Linear(self.mid_size)
     m_e = hk.Linear(self.mid_size)
@@ -735,7 +757,7 @@ ProcessorFactory = Callable[[int], Processor]
 def get_processor_factory(kind: str,
                           use_ln: bool,
                           nb_triplet_fts: int,
-                          nb_heads: Optional[int] = None) -> ProcessorFactory:
+                          nb_heads: Optional[int] = None, gated: bool = True) -> ProcessorFactory:
   """Returns a processor factory.
 
   Args:
@@ -847,7 +869,7 @@ def get_processor_factory(kind: str,
           use_ln=use_ln,
           use_triplets=False,
           nb_triplet_fts=nb_triplet_fts,
-          gated=True,
+          gated=gated,
       )
     elif kind == 'gpgn_mask':
       processor = PGNMask(
@@ -856,7 +878,7 @@ def get_processor_factory(kind: str,
           use_ln=use_ln,
           use_triplets=False,
           nb_triplet_fts=nb_triplet_fts,
-          gated=True,
+          gated=gated,
       )
     elif kind == 'gmpnn':
       processor = MPNN(
@@ -865,7 +887,7 @@ def get_processor_factory(kind: str,
           use_ln=use_ln,
           use_triplets=False,
           nb_triplet_fts=nb_triplet_fts,
-          gated=True,
+          gated=gated,
       )
     elif kind == 'triplet_gpgn':
       processor = PGN(
@@ -874,7 +896,7 @@ def get_processor_factory(kind: str,
           use_ln=use_ln,
           use_triplets=True,
           nb_triplet_fts=nb_triplet_fts,
-          gated=True,
+          gated=gated,
       )
     elif kind == 'triplet_gpgn_mask':
       processor = PGNMask(
@@ -883,7 +905,7 @@ def get_processor_factory(kind: str,
           use_ln=use_ln,
           use_triplets=True,
           nb_triplet_fts=nb_triplet_fts,
-          gated=True,
+          gated=gated,
       )
     elif kind == 'triplet_gmpnn':
       processor = MPNN(
@@ -892,7 +914,7 @@ def get_processor_factory(kind: str,
           use_ln=use_ln,
           use_triplets=True,
           nb_triplet_fts=nb_triplet_fts,
-          gated=True,
+          gated=gated,
       )
     else:
       raise ValueError('Unexpected processor kind ' + kind)

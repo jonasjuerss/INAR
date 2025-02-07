@@ -119,6 +119,17 @@ flags.DEFINE_string('dataset_path', '/tmp/CLRS30',
 flags.DEFINE_boolean('freeze_processor', False,
                      'Whether to freeze the processor of the model.')
 
+
+### additional arguments
+flags.DEFINE_boolean('time_encoding', False,
+                     'Whether to use the embeddings of time.')
+flags.DEFINE_boolean('positional_encoding', False,
+                     'Whether to use the positional time encoding.')
+flags.DEFINE_boolean('baseline', False,
+                     'Whether to run baseline')
+flags.DEFINE_boolean('gated', True,
+                     'whether to use the gated parameter for PGN networks')
+
 FLAGS = flags.FLAGS
 
 
@@ -437,6 +448,8 @@ def main(unused_argv):
       use_ln=FLAGS.use_ln,
       nb_triplet_fts=FLAGS.nb_triplet_fts,
       nb_heads=FLAGS.nb_heads,
+      gated = FLAGS.gated,
+      
   )
   model_params = dict(
       processor_factory=processor_factory,
@@ -453,6 +466,9 @@ def main(unused_argv):
       hint_teacher_forcing=FLAGS.hint_teacher_forcing,
       hint_repred_mode=FLAGS.hint_repred_mode,
       nb_msg_passing_steps=FLAGS.nb_msg_passing_steps,
+      time_encoding = FLAGS.time_encoding,
+      positional_encoding = FLAGS.positional_encoding,
+      baseline = FLAGS.baseline, 
       )
 
   eval_model = clrs.models.BaselineModel(
