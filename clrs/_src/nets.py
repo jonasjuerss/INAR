@@ -87,34 +87,29 @@ def preprocess_time_features(batch_size, seq_len, positional_encoding, d_model =
   positional_encoding = positional_encoding.at[:, 1::2].set(jnp.cos(position * div_term))  # Apply cos to odd indices
   return jnp.expand_dims(positional_encoding, axis=1).repeat(batch_size, axis=1)
 
+
 # def preprocess_time_features(batch_size, T, positional_encoding, d_model=512, margin=0.2):
 #     assert int((d_model // 2) ** 0.5) ** 2 * 2 == d_model, "d_model must be a perfect square times 2."
-
 #     n_freqs = int((d_model // 2) ** 0.5)
 #     width = 1 + 2 * margin
-
 #     # Generate positions and normalize to [-0.2, 1.2]
 #     positions = jnp.arange(0, T)[:, None]  # Shape: (T+1, 1)
 #     positions = positions / T * (1 + 2 * margin) - margin  # Normalize to [-0.2, 1.2]
-
 #     # Frequency grids for x and y
 #     freqs_y = jnp.arange(n_freqs)
 #     freqs_x = freqs_y[:, None]
-
 #     # Compute frequency terms for periodic encoding
 #     p_x = 2 * jnp.pi * freqs_x / width  # Shape: (n_freqs, n_freqs)
 #     p_y = 2 * jnp.pi * freqs_y / width
-
 #     # Compute position-based periodic embeddings
 #     loc = positions[:, None, None] * (p_x + p_y.T) 
-
 #     # Flatten and alternate sine and cosine components
 #     loc = loc.reshape(T , -1)  # Shape: (T+1, n_freqs * n_freqs)
 #     pe = jnp.zeros((T, d_model))  # Initialize encoding matrix
 #     pe = pe.at[:, 0::2].set(jnp.sin(loc))  # Apply sine to even indices
 #     pe = pe.at[:, 1::2].set(jnp.cos(loc))  # Apply cosine to odd indices
-
 #     return pe
+
 
 class Net(hk.Module):
   """Building blocks (networks) used to encode and decode messages."""
@@ -275,6 +270,7 @@ class Net(hk.Module):
     self.processor = self.processor_factory(self.hidden_dim)
 
     # Optionally construct LSTM.
+    accum_mp_state = None
     if self.use_lstm:
       self.lstm = hk.LSTM(
           hidden_size=self.hidden_dim,
@@ -340,7 +336,6 @@ class Net(hk.Module):
         inputs, cur_hint, mp_state.hiddens,
         batch_size, nb_nodes, mp_state.lstm_state,
         self.spec[algorithm_index], self.encoders[algorithm_index], self.decoders[algorithm_index], repred, time_fts)       
-        # return output_preds_cand, hint_preds
 
       else:
     
@@ -357,24 +352,27 @@ class Net(hk.Module):
               jnp.arange(nb_mp_steps - 1) + 1,
               length=nb_mp_steps - 1)
 
-    accum_mp_state = jax.tree_util.tree_map(
+    if accum_mp_state is not None:
+      accum_mp_state = jax.tree_util.tree_map(
             lambda init, tail: jnp.concatenate([init[None], tail], axis=0),
             lean_mp_state, accum_mp_state)
 
-    def invert(d):
-      if d:
-        return [dict(zip(d, i)) for i in zip(*d.values())]
+      def invert(d):
+        if d:
+          return [dict(zip(d, i)) for i in zip(*d.values())]
 
-    if return_all_outputs:
-        output_preds = {k: jnp.stack(v)
+      if return_all_outputs:
+          output_preds = {k: jnp.stack(v)
                           for k, v in accum_mp_state.output_preds.items()}
-    else:
-        output_preds = output_mp_state.output_preds
+      else:
+          output_preds = output_mp_state.output_preds
+            
+      hint_preds = invert(accum_mp_state.hint_preds)
+    
 
-    if inference and self.time_encoding:
+    if (inference and self.time_encoding) or self.baseline:
       output_preds = output_preds_cand
 
-    hint_preds = invert(accum_mp_state.hint_preds)
    
     return output_preds, hint_preds    
         
