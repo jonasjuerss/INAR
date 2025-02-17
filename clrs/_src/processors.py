@@ -415,7 +415,7 @@ class PGN(Processor):
     self.use_ln = use_ln
     self.use_triplets = use_triplets
     self.nb_triplet_fts = nb_triplet_fts
-    self.gated = gated
+    self.gated = False #gated
 
   def __call__(  # pytype: disable=signature-mismatch  # numpy-scalars
       self,
@@ -433,7 +433,7 @@ class PGN(Processor):
     assert graph_fts.shape[:-1] == (b,)
     assert adj_mat.shape == (b, n, n)
 
-    z = jnp.concatenate([node_fts, hidden], axis=-1)
+    z = node_fts #jnp.concatenate([node_fts, hidden], axis=-1)
     m_1 = hk.Linear(self.mid_size)
     m_2 = hk.Linear(self.mid_size)
     m_e = hk.Linear(self.mid_size)

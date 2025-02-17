@@ -404,7 +404,7 @@ class Net(hk.Module):
           edge_fts,
           graph_fts,
           adj_mat,
-          nxt_hidden,
+          None,
           batch_size=batch_size,
           nb_nodes=nb_nodes,
       )
@@ -419,7 +419,7 @@ class Net(hk.Module):
     else:
       nxt_lstm_state = None
 
-    h_t = jnp.concatenate([node_fts, hidden, nxt_hidden], axis=-1)
+    h_t = jnp.concatenate([node_fts, nxt_hidden], axis=-1)
     if nxt_edge is not None:
       e_t = jnp.concatenate([edge_fts, nxt_edge], axis=-1)
     else:
