@@ -30,7 +30,7 @@ import requests
 import tensorflow as tf
 
 
-flags.DEFINE_list('algorithms', ['bfs'], 'Which algorithms to run.')
+flags.DEFINE_list('algorithms', ['dfs'], 'Which algorithms to run.')
 flags.DEFINE_list('train_lengths', ['4', '7', '11', '13', '16'],
                   'Which training sizes to use. A size of -1 means '
                   'use the benchmark dataset.')
@@ -42,7 +42,6 @@ flags.DEFINE_integer('length_needle', -8,
                      'A value of 0 means use always 1/4 of the length of '
                      'the haystack (the default sampler behavior).')
 flags.DEFINE_integer('seed', 42, 'Random seed to set')
-
 flags.DEFINE_boolean('random_pos', True,
                      'Randomize the pos input common to all algos.')
 flags.DEFINE_boolean('enforce_permutations', True,
@@ -112,6 +111,7 @@ flags.DEFINE_enum('processor_type', 'triplet_gmpnn',
                    'triplet_gpgn', 'triplet_gpgn_mask', 'triplet_gmpnn'],
                   'Processor type to use as the network P.')
 
+
 flags.DEFINE_string('checkpoint_path', '/tmp/CLRS30',
                     'Path in which checkpoints are saved.')
 flags.DEFINE_string('dataset_path', '/tmp/CLRS30',
@@ -120,15 +120,6 @@ flags.DEFINE_boolean('freeze_processor', False,
                      'Whether to freeze the processor of the model.')
 
 
-### additional arguments
-flags.DEFINE_boolean('time_encoding', False,
-                     'Whether to use the embeddings of time.')
-flags.DEFINE_boolean('positional_encoding', False,
-                     'Whether to use the positional time encoding.')
-flags.DEFINE_boolean('baseline', False,
-                     'Whether to run baseline')
-flags.DEFINE_boolean('gated', True,
-                     'whether to use the gated parameter for PGN networks')
 
 FLAGS = flags.FLAGS
 

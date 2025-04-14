@@ -39,12 +39,10 @@ def construct_encoders(stage: str, loc: str, t: str,
     initialiser = None
   else:
     raise ValueError(f'Encoder initialiser {init} not supported.')
-  
   linear = functools.partial(
       hk.Linear,
       w_init=initialiser,
       name=f'{name}_enc_linear')
-    
   encoders = [linear(hidden_dim)]
   if loc == _Location.EDGE and t == _Type.POINTER:
     # Edge pointers need two-way encoders.
@@ -107,7 +105,6 @@ def accum_edge_fts(encoders, dp: _DataPoint, edge_fts: _Array) -> _Array:
       encoding_2 = encoders[1](jnp.expand_dims(dp.data, -1))
       edge_fts += jnp.mean(encoding, axis=1) + jnp.mean(encoding_2, axis=2)
     else:
-      
       edge_fts += encoding
 
   return edge_fts
@@ -127,21 +124,16 @@ def accum_node_fts(encoders, dp: _DataPoint, node_fts: _Array) -> _Array:
 def accum_graph_fts(encoders, dp: _DataPoint,
                     graph_fts: _Array) -> _Array:
   """Encodes and accumulates graph features."""
-  encoding = None
   if dp.location == _Location.GRAPH and dp.type_ != _Type.POINTER:
     encoding = _encode_inputs(encoders, dp)
     graph_fts += encoding
 
-  return graph_fts, encoding
+  return graph_fts
 
 
 def _encode_inputs(encoders, dp: _DataPoint) -> _Array:
   if dp.type_ == _Type.CATEGORICAL:
     encoding = encoders[0](dp.data)
   else:
-    if dp.name == 'time_linear_encoding':
-      encoding = encoders[0](dp.data)
-        
-    else:
-      encoding = encoders[0](jnp.expand_dims(dp.data, -1))
+    encoding = encoders[0](jnp.expand_dims(dp.data, -1))
   return encoding

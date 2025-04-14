@@ -79,6 +79,7 @@ def construct_decoders(loc: str, t: str, hidden_dim: int, nb_dims: int,
                   linear(1))
     else:
       raise ValueError(f"Invalid Type {t}")
+
   elif loc == _Location.EDGE:
     # Edge decoders.
     if t in [_Type.SCALAR, _Type.MASK, _Type.MASK_ONE]:
@@ -90,6 +91,7 @@ def construct_decoders(loc: str, t: str, hidden_dim: int, nb_dims: int,
                   linear(hidden_dim), linear(hidden_dim), linear(1))
     else:
       raise ValueError(f"Invalid Type {t}")
+
   elif loc == _Location.GRAPH:
     # Graph decoders.
     if t in [_Type.SCALAR, _Type.MASK, _Type.MASK_ONE]:
@@ -104,6 +106,7 @@ def construct_decoders(loc: str, t: str, hidden_dim: int, nb_dims: int,
 
   else:
     raise ValueError(f"Invalid Location {loc}")
+
   return decoders
 
 
@@ -206,9 +209,11 @@ def decode_fts(
   """Decodes node, edge and graph features."""
   output_preds = {}
   hint_preds = {}
+
   for name in decoders:
     decoder = decoders[name]
     stage, loc, t = spec[name]
+
     if loc == _Location.NODE:
       preds = _decode_node_fts(decoder, t, h_t, edge_fts, adj_mat,
                                inf_bias, repred)
@@ -233,11 +238,12 @@ def decode_fts(
 def _decode_node_fts(decoders, t: str, h_t: _Array, edge_fts: _Array,
                      adj_mat: _Array, inf_bias: bool, repred: bool) -> _Array:
   """Decodes node features."""
+
   if t in [_Type.SCALAR, _Type.MASK, _Type.MASK_ONE]:
     preds = jnp.squeeze(decoders[0](h_t), -1)
   elif t == _Type.CATEGORICAL:
     preds = decoders[0](h_t)
-  elif t in [_Type.POINTER, _Type.PERMUTATION_POINTER]: ###### doubt?decode_fts
+  elif t in [_Type.POINTER, _Type.PERMUTATION_POINTER]:
     p_1 = decoders[0](h_t)
     p_2 = decoders[1](h_t)
     p_3 = decoders[2](edge_fts)
