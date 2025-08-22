@@ -121,7 +121,7 @@ flags.DEFINE_string('dataset_path', '/tmp/CLRS30',
                     'Path in which dataset is stored.')
 flags.DEFINE_boolean('freeze_processor', False,
                      'Whether to freeze the processor of the model.')
-flags.DEFINE_list('test_sampler', ['bipartite'], ['default', 'bipartite', 'community'],
+flags.DEFINE_list('test_sampler', ['default'], #['default', 'bipartite', 'community'],
                     'Allows to overwrite all data samplers with the given one.')
 
 
@@ -484,7 +484,7 @@ def main(unused_argv):
       train_lengths=train_lengths,
       algorithms=FLAGS.algorithms,
       val_lengths=[np.amax(train_lengths)],
-      test_lengths=[-1],
+      test_lengths=test_lengths,
       train_batch_size=FLAGS.batch_size, tst_sampler = tst_sampler,
   )
 
