@@ -34,6 +34,10 @@ flags.DEFINE_list('algorithms', ['bfs'], 'Which algorithms to run.')
 flags.DEFINE_list('train_lengths', ['4', '7', '11', '13', '16'],
                   'Which training sizes to use. A size of -1 means '
                   'use the benchmark dataset.')
+flags.DEFINE_list('test_lengths', ['16', '32'],
+                  'Which test sizes to use.')
+
+
 flags.DEFINE_integer('length_needle', -8,
                      'Length of needle for training and validation '
                      '(not testing) in string matching algorithms. '
@@ -55,7 +59,7 @@ flags.DEFINE_boolean('chunked_training', False,
 flags.DEFINE_integer('chunk_length', 16,
                      'Time chunk length used for training (if '
                      '`chunked_training` is True.')
-flags.DEFINE_integer('train_steps', 10000, 'Number of training iterations.')
+flags.DEFINE_integer('train_steps', 1, 'Number of training iterations.')
 flags.DEFINE_integer('eval_every', 50, 'Evaluation frequency (in steps).')
 flags.DEFINE_integer('test_every', 500, 'Evaluation frequency (in steps).')
 
@@ -118,6 +122,9 @@ flags.DEFINE_string('dataset_path', '/tmp/CLRS30',
                     'Path in which dataset is stored.')
 flags.DEFINE_boolean('freeze_processor', False,
                      'Whether to freeze the processor of the model.')
+flags.DEFINE_list('test_sampler', ['default'], #['default', 'bipartite', 'community'],
+                    'Allows to overwrite all data samplers with the given one.')
+
 
 FLAGS = flags.FLAGS
 
@@ -280,7 +287,7 @@ def create_samplers(
     test_lengths: Optional[List[int]] = None,
     train_batch_size: int = 32,
     val_batch_size: int = 32,
-    test_batch_size: int = 32,
+    test_batch_size: int = 32, tst_sampler = None,
 ):
   """Create samplers for training, validation and testing.
 
@@ -374,28 +381,58 @@ def create_samplers(
                       **common_sampler_args)
       val_sampler, val_samples, spec = make_multi_sampler(**val_args)
 
-      test_args = dict(sizes=test_lengths or [-1],
-                       split='test',
-                       batch_size=test_batch_size,
-                       multiplier=2 * mult,
-                       randomize_pos=False,
-                       chunked=False,
-                       sampler_kwargs={},
-                       **common_sampler_args)
-      test_sampler, test_samples, spec = make_multi_sampler(**test_args)
+      for length in test_lengths:
+        test_args = dict(sizes=[length],
+                         split='test',
+                         batch_size=32,
+                         multiplier=2 * mult,
+                         randomize_pos=False,
+                         chunked=False,
+                         sampler_kwargs={'tst_sampler' :tst_sampler[algo_idx]},
+                         **common_sampler_args)
+        test_sampler, test_samples, spec = make_multi_sampler(**test_args)
+        test_samplers.append(test_sampler)
+        test_sample_counts.append(test_samples)
 
     spec_list.append(spec)
     train_samplers.append(train_sampler)
     val_samplers.append(val_sampler)
     val_sample_counts.append(val_samples)
-    test_samplers.append(test_sampler)
-    test_sample_counts.append(test_samples)
 
   return (train_samplers,
           val_samplers, val_sample_counts,
-          test_samplers, test_sample_counts,
+          [test_samplers], [test_sample_counts],
           spec_list)
 
+
+def get_sampler_for_algo(algo_name, test_sampler_override):
+    """Get appropriate sampler with fallback logic."""
+    
+    NON_DEFAULT_SAMPLERS  = {
+        'bellman_ford': ['default', 'community'],
+        'mst_kruskal': ['default', 'community'],
+        'dfs': ['default', 'community', 'bipartite'],
+        'bfs': ['default', 'community', 'bipartite'],
+        'topological_sort': ['default', 'community', 'bipartite'],
+        'articulation_points': ['default', 'community', 'bipartite'],
+        'dag_shortest_paths': ['default', 'community'],
+        'floyd_warshall': ['default', 'community'],
+    }
+    
+    if test_sampler_override == 'default':
+        return None
+    
+    # Check if algorithm supports the requested sampler
+    extra_samplers = NON_DEFAULT_SAMPLERS.get(algo_name, [])
+    if test_sampler_override in extra_samplers:
+        return test_sampler_override
+    else:
+        warnings.warn(
+            f"Sampler '{test_sampler_override}' not available for algorithm '{algo_name}'. "
+            f"Available samplers: {extra_samplers}. Falling back to default sampler.",
+            UserWarning
+        )
+        return None
 
 def main(unused_argv):
   if FLAGS.hint_mode == 'encoded_decoded':
@@ -411,6 +448,28 @@ def main(unused_argv):
     raise ValueError('Hint mode not in {encoded_decoded, decoded_only, none}.')
 
   train_lengths = [int(x) for x in FLAGS.train_lengths]
+  test_lengths = [int(x) for x in FLAGS.test_lengths]
+  if len(FLAGS.algorithms) != len(FLAGS.test_sampler):
+    raise ValueError(
+        f"Algorithm and sampler lists must have same length. "
+        f"Got {len(FLAGS.algorithms)} algorithms and {len(FLAGS.test_sampler)} samplers."
+    )
+    
+  tst_sampler = []
+  # if isinstance(FLAGS.algorithms, list):
+  # Apply to each algorithm in the list
+  for idx, algo in enumerate(FLAGS.algorithms):
+    tst_sampler.append(get_sampler_for_algo(algo, FLAGS.test_sampler[idx]))
+
+  for sampler_override in tst_sampler:
+    if sampler_override != "" and sampler_override!= None:
+      # Check if test_lengths contains -1 or is -1
+      if -1 in test_lengths:
+        raise ValueError(
+        f"You are using the custom data sampler '{sampler_override}' but some of your test_lengths "
+        f"include -1 which means they come from a pre-defined dataset with possibly different distribution!"
+    )
+
 
   rng = np.random.RandomState(FLAGS.seed)
   rng_key = jax.random.PRNGKey(rng.randint(2**32, dtype=np.uint32))
@@ -420,17 +479,18 @@ def main(unused_argv):
       train_samplers,
       val_samplers,
       val_sample_counts,
-      test_samplers,
-      test_sample_counts,
+      test_samplers_all,
+      test_sample_counts_all,
       spec_list,
   ) = create_samplers(
       rng=rng,
       train_lengths=train_lengths,
       algorithms=FLAGS.algorithms,
       val_lengths=[np.amax(train_lengths)],
-      test_lengths=[-1],
-      train_batch_size=FLAGS.batch_size,
+      test_lengths=test_lengths,
+      train_batch_size=FLAGS.batch_size, tst_sampler = tst_sampler,
   )
+
 
   processor_factory = clrs.get_processor_factory(
       FLAGS.processor_type,
@@ -567,15 +627,18 @@ def main(unused_argv):
     common_extras = {'examples_seen': current_train_items[algo_idx],
                      'step': step,
                      'algorithm': FLAGS.algorithms[algo_idx]}
-
-    new_rng_key, rng_key = jax.random.split(rng_key)
-    test_stats = collect_and_eval(
-        test_samplers[algo_idx],
+    log_dict = {"test": {"score": {}}}
+    
+    for i in range(len(test_samplers_all[algo_idx])):
+      new_rng_key, rng_key = jax.random.split(rng_key)
+      test_stats = collect_and_eval(
+        test_samplers_all[algo_idx][i],
         functools.partial(eval_model.predict, algorithm_index=algo_idx),
-        test_sample_counts[algo_idx],
+        test_sample_counts_all[algo_idx][i],
         new_rng_key,
         extras=common_extras)
-    logging.info('(test) algo %s : %s', FLAGS.algorithms[algo_idx], test_stats)
+      logging.info('(test) algo %s, length %i : %s', FLAGS.algorithms[algo_idx], test_lengths[i], test_stats)
+      log_dict["test"]["score"][test_lengths[i]] = test_stats["score"]
 
   logging.info('Done!')
 

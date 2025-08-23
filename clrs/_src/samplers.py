@@ -279,7 +279,7 @@ def build_sampler(
     num_samples: int,
     *args,
     seed: Optional[int] = None,
-    track_max_steps: bool = True,
+    track_max_steps: bool = True, split = None,
     **kwargs,
 ) -> Tuple[Sampler, specs.Spec]:
   """Builds a sampler. See `Sampler` documentation."""
@@ -418,12 +418,30 @@ class DfsSampler(Sampler):
   def _sample_data(
       self,
       length: int,
-      p: Tuple[float, ...] = (0.5,),
+      p: Tuple[float, ...] = (0.5,), k: int = 4, eps: float = 0.01, length_2 = None, tst_Sampler = None, 
   ):
-    graph = self._random_er_graph(
+    graph = None
+    if tst_Sampler == None:
+      graph = self._random_er_graph(
         nb_nodes=length, p=self._rng.choice(p),
         directed=True, acyclic=False, weighted=False)
+    
+    elif tst_Sampler == 'community':
+      graph = self._random_community_graph(  
+          nb_nodes=length, k=k, p=self._rng.choice(p), eps=eps,
+          directed=True, acyclic=False, weighted=False)
+    
+    elif tst_Sampler == 'bipartite':
+      if length_2 is None:
+      # Assume provided length is total length.
+        length_2 = length // 2
+        length -= length_2
+    
+      graph = self._random_bipartite_graph(n=length, m=length_2,
+                                         p=self._rng.choice(p))
+        
     return [graph]
+
 
 
 class BfsSampler(Sampler):
@@ -432,14 +450,30 @@ class BfsSampler(Sampler):
   def _sample_data(
       self,
       length: int,
-      p: Tuple[float, ...] = (0.5,),
+      p: Tuple[float, ...] = (0.5,), k: int = 4, eps: float = 0.01, length_2 = None, tst_Sampler = None, 
   ):
-    graph = self._random_er_graph(
+    graph = None
+    if tst_Sampler == None:
+      graph = self._random_er_graph(
         nb_nodes=length, p=self._rng.choice(p),
         directed=False, acyclic=False, weighted=False)
+    
+    elif tst_Sampler == 'community':
+      graph = self._random_community_graph(  
+          nb_nodes=length, k=k, p=self._rng.choice(p), eps=eps,
+          directed=False, acyclic=False, weighted=False)
+    
+    elif tst_Sampler == 'bipartite':
+      if length_2 is None:
+      # Assume provided length is total length.
+        length_2 = length // 2
+        length -= length_2
+    
+      graph = self._random_bipartite_graph(n=length, m=length_2,
+                                         p=self._rng.choice(p))
+        
     source_node = self._rng.choice(length)
     return [graph, source_node]
-
 
 class TopoSampler(Sampler):
   """Topological Sorting sampler."""
@@ -447,12 +481,30 @@ class TopoSampler(Sampler):
   def _sample_data(
       self,
       length: int,
-      p: Tuple[float, ...] = (0.5,),
+      p: Tuple[float, ...] = (0.5,), k: int = 4, eps: float = 0.01, length_2 = None, tst_Sampler = None, 
   ):
-    graph = self._random_er_graph(
+    graph = None
+    if tst_Sampler == None:
+      graph = self._random_er_graph(
         nb_nodes=length, p=self._rng.choice(p),
         directed=True, acyclic=True, weighted=False)
+    
+    elif tst_Sampler == 'community':
+      graph = self._random_community_graph(  
+          nb_nodes=length, k=k, p=self._rng.choice(p), eps=eps,
+          directed=True, acyclic=True, weighted=False)
+    
+    elif tst_Sampler == 'bipartite':
+      if length_2 is None:
+      # Assume provided length is total length.
+        length_2 = length // 2
+        length -= length_2
+    
+      graph = self._random_bipartite_graph(n=length, m=length_2,
+                                         p=self._rng.choice(p))
+        
     return [graph]
+
 
 
 class ArticulationSampler(Sampler):
@@ -461,25 +513,43 @@ class ArticulationSampler(Sampler):
   def _sample_data(
       self,
       length: int,
-      p: Tuple[float, ...] = (0.2,),
+      p: Tuple[float, ...] = (0.2,), k: int = 4, eps: float = 0.01, length_2 = None, tst_Sampler = None, 
   ):
-    graph = self._random_er_graph(
-        nb_nodes=length, p=self._rng.choice(p), directed=False,
-        acyclic=False, weighted=False)
+    graph = None
+    if tst_Sampler == None:
+      graph = self._random_er_graph(
+        nb_nodes=length, p=self._rng.choice(p),
+        directed=False, acyclic=False, weighted=False)
+    
+    elif tst_Sampler == 'community':
+      graph = self._random_community_graph(  
+          nb_nodes=length, k=k, p=self._rng.choice(p), eps=eps,
+          directed=False, acyclic=False, weighted=False)
+    
+    elif tst_Sampler == 'bipartite':
+      if length_2 is None:
+      # Assume provided length is total length.
+        length_2 = length // 2
+        length -= length_2
+    
+      graph = self._random_bipartite_graph(n=length, m=length_2,
+                                         p=self._rng.choice(p))
+        
     return [graph]
 
 
 class MSTSampler(Sampler):
   """MST sampler for Kruskal's algorithm."""
-
+  
   def _sample_data(
       self,
       length: int,
-      p: Tuple[float, ...] = (0.2,),  # lower p to account for class imbalance
-      low: float = 0.,
-      high: float = 1.,
+      p: Tuple[float, ...] = (0.2,), low: float = 0.,
+      high: float = 1.,k: int = 4, eps: float = 0.01, length_2 = None, tst_Sampler = None, 
   ):
-    graph = self._random_er_graph(
+    graph = None
+    if tst_Sampler == None:
+      graph = self._random_er_graph(
         nb_nodes=length,
         p=self._rng.choice(p),
         directed=False,
@@ -487,20 +557,28 @@ class MSTSampler(Sampler):
         weighted=True,
         low=low,
         high=high)
+    
+    elif tst_Sampler == 'community':
+      graph = self._random_community_graph(  
+          nb_nodes=length, k=k, p=self._rng.choice(p), eps=eps,
+          directed=False, acyclic=False, weighted=True, low=low,
+        high=high)
+        
     return [graph]
 
 
 class BellmanFordSampler(Sampler):
   """Bellman-Ford sampler."""
-
+  
   def _sample_data(
       self,
       length: int,
-      p: Tuple[float, ...] = (0.5,),
-      low: float = 0.,
-      high: float = 1.,
+      p: Tuple[float, ...] = (0.5,), low: float = 0.,
+      high: float = 1.,k: int = 4, eps: float = 0.01, length_2 = None, tst_Sampler = None, 
   ):
-    graph = self._random_er_graph(
+    graph = None
+    if tst_Sampler == None:
+      graph = self._random_er_graph(
         nb_nodes=length,
         p=self._rng.choice(p),
         directed=False,
@@ -508,21 +586,28 @@ class BellmanFordSampler(Sampler):
         weighted=True,
         low=low,
         high=high)
+    
+    elif tst_Sampler == 'community':
+      graph = self._random_community_graph(  
+          nb_nodes=length, k=k, p=self._rng.choice(p), eps=eps,
+          directed=False, acyclic=False, weighted=True, low=low,
+        high=high)
+        
     source_node = self._rng.choice(length)
     return [graph, source_node]
 
-
 class DAGPathSampler(Sampler):
   """Sampler for DAG shortest paths."""
-
+    
   def _sample_data(
       self,
       length: int,
-      p: Tuple[float, ...] = (0.5,),
-      low: float = 0.,
-      high: float = 1.,
+      p: Tuple[float, ...] = (0.5,), low: float = 0.,
+      high: float = 1.,k: int = 4, eps: float = 0.01, length_2 = None, tst_Sampler = None, 
   ):
-    graph = self._random_er_graph(
+    graph = None
+    if tst_Sampler == None:
+      graph = self._random_er_graph(
         nb_nodes=length,
         p=self._rng.choice(p),
         directed=True,
@@ -530,21 +615,28 @@ class DAGPathSampler(Sampler):
         weighted=True,
         low=low,
         high=high)
+    
+    elif tst_Sampler == 'community':
+      graph = self._random_community_graph(  
+          nb_nodes=length, k=k, p=self._rng.choice(p), eps=eps,
+          directed=True, acyclic=True, weighted=True, low=low,
+        high=high)
+        
     source_node = self._rng.choice(length)
     return [graph, source_node]
 
 
 class FloydWarshallSampler(Sampler):
   """Sampler for all-pairs shortest paths."""
-
   def _sample_data(
       self,
       length: int,
-      p: Tuple[float, ...] = (0.5,),
-      low: float = 0.,
-      high: float = 1.,
+      p: Tuple[float, ...] = (0.5,), low: float = 0.,
+      high: float = 1.,k: int = 4, eps: float = 0.01, length_2 = None, tst_Sampler = None, 
   ):
-    graph = self._random_er_graph(
+    graph = None
+    if tst_Sampler == None:
+      graph = self._random_er_graph(
         nb_nodes=length,
         p=self._rng.choice(p),
         directed=False,
@@ -552,6 +644,13 @@ class FloydWarshallSampler(Sampler):
         weighted=True,
         low=low,
         high=high)
+    
+    elif tst_Sampler == 'community':
+      graph = self._random_community_graph(  
+          nb_nodes=length, k=k, p=self._rng.choice(p), eps=eps,
+          directed=False, acyclic=False, weighted=True, low=low,
+        high=high)
+        
     return [graph]
 
 
