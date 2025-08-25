@@ -28,13 +28,13 @@ import jax
 import numpy as np
 import requests
 import tensorflow as tf
-
+import warnings
 
 flags.DEFINE_list('algorithms', ['bfs'], 'Which algorithms to run.')
 flags.DEFINE_list('train_lengths', ['4', '7', '11', '13', '16'],
                   'Which training sizes to use. A size of -1 means '
                   'use the benchmark dataset.')
-flags.DEFINE_list('test_lengths', ['16', '32'],
+flags.DEFINE_list('test_lengths', ['-1'],
                   'Which test sizes to use.')
 
 
@@ -122,10 +122,8 @@ flags.DEFINE_string('dataset_path', '/tmp/CLRS30',
                     'Path in which dataset is stored.')
 flags.DEFINE_boolean('freeze_processor', False,
                      'Whether to freeze the processor of the model.')
-flags.DEFINE_list('test_sampler', ['default'], #['default', 'bipartite', 'community'],
+flags.DEFINE_list('test_sampler', [[None]], #['default', 'bipartite', 'community'],
                     'Allows to overwrite all data samplers with the given one.')
-
-
 FLAGS = flags.FLAGS
 
 
@@ -319,6 +317,7 @@ def create_samplers(
   val_samplers = []
   val_sample_counts = []
   test_samplers = []
+  test_samplers_dict = []
   test_sample_counts = []
   spec_list = []
 
@@ -380,59 +379,138 @@ def create_samplers(
                       sampler_kwargs=sampler_kwargs,
                       **common_sampler_args)
       val_sampler, val_samples, spec = make_multi_sampler(**val_args)
+        
+      algo_test_samplers = []
+      algo_test_counts = []
+      algo_test_samplers_dict = {}   # {length: [sampler1, sampler2, ...]}
 
       for length in test_lengths:
-        test_args = dict(sizes=[length],
-                         split='test',
-                         batch_size=32,
-                         multiplier=2 * mult,
-                         randomize_pos=False,
-                         chunked=False,
-                         sampler_kwargs={'tst_sampler' :tst_sampler[algo_idx]},
-                         **common_sampler_args)
-        test_sampler, test_samples, spec = make_multi_sampler(**test_args)
-        test_samplers.append(test_sampler)
-        test_sample_counts.append(test_samples)
+        length_samplers = []
+        length_counts = []
+        samp = None
+        length_sampler_dict = []
+        # if length = -1 → only default sampler
+        if length == -1:
+          try:
+              test_args = dict(
+                sizes=[-1],   # or however you represent "no length"
+                split='test',
+                batch_size=32,
+                multiplier=2 * mult,
+                randomize_pos=False,
+                chunked=False,
+                **common_sampler_args
+            )
+              # print(sampler_kwargs)
+              
+              test_args["sampler_kwargs"] = {"tst_sampler": None}
+              test_sampler, test_samples, spec = make_multi_sampler(**test_args)
+              length_samplers.append(test_sampler)
+              length_counts.append(test_samples)
+              length_sampler_dict.append('None')
+
+              # length_sampler_dict[length] = 'None'
+
+          except Exception as e:
+              warnings.warn(
+                f"Failed to build default test sampler for algo={algorithm}, "
+                f"length=-1. Skipping. Error: {e}",
+                UserWarning
+            )
+        else:
+          for sampler_override in tst_sampler[algo_idx]:
+            try:
+              test_args = dict(
+                sizes=[length],
+                split='test',
+                batch_size=32,
+                multiplier=2 * mult,
+                randomize_pos=False,
+                chunked=False,
+                **common_sampler_args
+              )
+
+              test_args["sampler_kwargs"] = {"tst_sampler": sampler_override}
+
+              test_sampler, test_samples, spec = make_multi_sampler(**test_args)
+              length_samplers.append(test_sampler)
+              length_counts.append(test_samples)
+              length_sampler_dict.append(sampler_override)
+            
+              # length_sampler_dict[length] = sampler_override
+
+            except Exception as e:
+              warnings.warn(
+                f"Failed to build test sampler for algo={algorithm}, "
+                f"length={length}, sampler={sampler_override}. "
+                f"Skipping. Error: {e}",
+                UserWarning
+            )
+              continue  # skip this case, continue with next
+
+        algo_test_samplers.append(length_samplers)
+        algo_test_samplers_dict[length]= (length_sampler_dict)
+        algo_test_counts.append(length_counts)
+
 
     spec_list.append(spec)
     train_samplers.append(train_sampler)
     val_samplers.append(val_sampler)
     val_sample_counts.append(val_samples)
+    test_samplers.append(algo_test_samplers)
+    test_samplers_dict.append(algo_test_samplers_dict)
+    
+    test_sample_counts.append(algo_test_counts)
 
   return (train_samplers,
           val_samplers, val_sample_counts,
-          [test_samplers], [test_sample_counts],
+          test_samplers, test_samplers_dict, test_sample_counts, 
           spec_list)
 
 
-def get_sampler_for_algo(algo_name, test_sampler_override):
-    """Get appropriate sampler with fallback logic."""
-    
-    NON_DEFAULT_SAMPLERS  = {
-        'bellman_ford': ['default', 'community'],
-        'mst_kruskal': ['default', 'community'],
-        'dfs': ['default', 'community', 'bipartite'],
-        'bfs': ['default', 'community', 'bipartite'],
-        'topological_sort': ['default', 'community', 'bipartite'],
-        'articulation_points': ['default', 'community', 'bipartite'],
-        'dag_shortest_paths': ['default', 'community'],
-        'floyd_warshall': ['default', 'community'],
+
+def get_samplers_for_algo(algo_name, test_sampler_overrides):
+    """Return list of valid samplers for given algorithm, always including 'default'."""
+
+    print('test_sampler_overrides', test_sampler_overrides)
+    NON_DEFAULT_SAMPLERS = {
+        'bellman_ford': ['community'],
+        'mst_kruskal': ['community'],
+        'dfs': ['community', 'bipartite'],
+        'bfs': ['community', 'bipartite'],
+        'topological_sort': ['community', 'bipartite'],
+        'articulation_points': ['community', 'bipartite'],
+        'dag_shortest_paths': ['community'],
+        'floyd_warshall': ['community'],
     }
-    
-    if test_sampler_override == 'default':
-        return None
-    
-    # Check if algorithm supports the requested sampler
+
+    # If user passed a single string, wrap it
+    if isinstance(test_sampler_overrides, str):
+        test_sampler_overrides = [test_sampler_overrides]
+
+    valid_samplers = [None]  # always start with default
     extra_samplers = NON_DEFAULT_SAMPLERS.get(algo_name, [])
-    if test_sampler_override in extra_samplers:
-        return test_sampler_override
-    else:
-        warnings.warn(
-            f"Sampler '{test_sampler_override}' not available for algorithm '{algo_name}'. "
-            f"Available samplers: {extra_samplers}. Falling back to default sampler.",
-            UserWarning
-        )
-        return None
+
+    for override in test_sampler_overrides:
+        if override == "default":
+            continue  # already included
+        if override in extra_samplers:
+            valid_samplers.append(override)
+        else:
+            warnings.warn(
+                f"Sampler '{override}' not available for algorithm '{algo_name}'. "
+                f"Available extras: {extra_samplers}. Falling back to default.",
+                UserWarning
+            )
+    # Deduplicate while preserving order
+    seen, deduped = set(), []
+    for s in valid_samplers:
+        if s not in seen:
+            deduped.append(s)
+            seen.add(s)
+            
+    return deduped #list(dict.fromkeys(valid_samplers))  # remove duplicates, preserve order
+
 
 def main(unused_argv):
   if FLAGS.hint_mode == 'encoded_decoded':
@@ -449,26 +527,16 @@ def main(unused_argv):
 
   train_lengths = [int(x) for x in FLAGS.train_lengths]
   test_lengths = [int(x) for x in FLAGS.test_lengths]
-  if len(FLAGS.algorithms) != len(FLAGS.test_sampler):
-    raise ValueError(
-        f"Algorithm and sampler lists must have same length. "
-        f"Got {len(FLAGS.algorithms)} algorithms and {len(FLAGS.test_sampler)} samplers."
-    )
     
-  tst_sampler = []
-  # if isinstance(FLAGS.algorithms, list):
-  # Apply to each algorithm in the list
-  for idx, algo in enumerate(FLAGS.algorithms):
-    tst_sampler.append(get_sampler_for_algo(algo, FLAGS.test_sampler[idx]))
 
-  for sampler_override in tst_sampler:
-    if sampler_override != "" and sampler_override!= None:
-      # Check if test_lengths contains -1 or is -1
-      if -1 in test_lengths:
-        raise ValueError(
-        f"You are using the custom data sampler '{sampler_override}' but some of your test_lengths "
-        f"include -1 which means they come from a pre-defined dataset with possibly different distribution!"
-    )
+  # Build list of sampler overrides for each algorithm
+  tst_samplers = []
+  for idx, algo in enumerate(FLAGS.algorithms):
+      overrides = FLAGS.test_sampler[idx]
+      if isinstance(overrides, str) and "," in overrides:
+          overrides = overrides.split(",")
+      samplers = get_samplers_for_algo(algo, overrides)
+      tst_samplers.append(samplers)
 
 
   rng = np.random.RandomState(FLAGS.seed)
@@ -479,7 +547,7 @@ def main(unused_argv):
       train_samplers,
       val_samplers,
       val_sample_counts,
-      test_samplers_all,
+      test_samplers_all, test_samplers_dict, 
       test_sample_counts_all,
       spec_list,
   ) = create_samplers(
@@ -488,10 +556,10 @@ def main(unused_argv):
       algorithms=FLAGS.algorithms,
       val_lengths=[np.amax(train_lengths)],
       test_lengths=test_lengths,
-      train_batch_size=FLAGS.batch_size, tst_sampler = tst_sampler,
+      train_batch_size=FLAGS.batch_size, tst_sampler = tst_samplers,
   )
 
-
+  print(tst_samplers, test_samplers_dict)
   processor_factory = clrs.get_processor_factory(
       FLAGS.processor_type,
       use_ln=FLAGS.use_ln,
@@ -622,26 +690,53 @@ def main(unused_argv):
 
   logging.info('Restoring best model from checkpoint...')
   eval_model.restore_model('best.pkl', only_load_processor=False)
-
-  for algo_idx in range(len(train_samplers)):
-    common_extras = {'examples_seen': current_train_items[algo_idx],
-                     'step': step,
-                     'algorithm': FLAGS.algorithms[algo_idx]}
-    log_dict = {"test": {"score": {}}}
     
-    for i in range(len(test_samplers_all[algo_idx])):
-      new_rng_key, rng_key = jax.random.split(rng_key)
-      test_stats = collect_and_eval(
-        test_samplers_all[algo_idx][i],
-        functools.partial(eval_model.predict, algorithm_index=algo_idx),
-        test_sample_counts_all[algo_idx][i],
-        new_rng_key,
-        extras=common_extras)
-      logging.info('(test) algo %s, length %i : %s', FLAGS.algorithms[algo_idx], test_lengths[i], test_stats)
-      log_dict["test"]["score"][test_lengths[i]] = test_stats["score"]
+
+  for algo_idx, algorithm in enumerate(FLAGS.algorithms):
+    common_extras = {
+        "examples_seen": current_train_items[algo_idx],
+        "step": step,
+        "algorithm": algorithm,
+    }
+    log_dict = {"test": {"score": {}}}
+
+    # loop over dict of {length: [sampler_names...]}
+    for length_idx, (length, sampler_names) in enumerate(test_samplers_dict[algo_idx].items()):
+        log_dict["test"]["score"][length] = {}
+
+        for samp_idx, sampler_name in enumerate(sampler_names):
+            # check bounds
+            if length_idx >= len(test_samplers_all[algo_idx]):
+                continue
+            if samp_idx >= len(test_samplers_all[algo_idx][length_idx]):
+                continue
+
+            sampler = test_samplers_all[algo_idx][length_idx][samp_idx]
+            if sampler is None:
+                continue
+
+            new_rng_key, rng_key = jax.random.split(rng_key)
+            test_stats = collect_and_eval(
+                sampler,
+                functools.partial(eval_model.predict, algorithm_index=algo_idx),
+                test_sample_counts_all[algo_idx][length_idx][samp_idx],
+                new_rng_key,
+                extras=common_extras,
+            )
+
+            sampler_name = sampler_name or "default"
+            logging.info(
+                "(test) algo=%s, length=%i, sampler=%s : %s",
+                algorithm,
+                length,
+                sampler_name,
+                test_stats,
+            )
+
+            log_dict["test"]["score"][length][sampler_name] = test_stats["score"]
 
   logging.info('Done!')
-
+  
 
 if __name__ == '__main__':
   app.run(main)
