@@ -283,7 +283,6 @@ def build_sampler(
     **kwargs,
 ) -> Tuple[Sampler, specs.Spec]:
   """Builds a sampler. See `Sampler` documentation."""
-
   if name not in specs.SPECS or name not in SAMPLERS:
     raise NotImplementedError(f'No implementation of algorithm {name}.')
   spec = specs.SPECS[name]
@@ -292,9 +291,12 @@ def build_sampler(
   # Ignore kwargs not accepted by the sampler.
   sampler_args = inspect.signature(sampler_class._sample_data).parameters  # pylint:disable=protected-access
   clean_kwargs = {k: kwargs[k] for k in kwargs if k in sampler_args}
+  clean_kwargs['tst_Sampler'] = kwargs.get('tst_sampler', None)
+
   if set(clean_kwargs) != set(kwargs):
     logging.warning('Ignoring kwargs %s when building sampler class %s',
                     set(kwargs).difference(clean_kwargs), sampler_class)
+  # print('8888888888888888888888888888888888', clean_kwargs, args)
   sampler = sampler_class(
       algorithm,
       spec,
@@ -303,7 +305,7 @@ def build_sampler(
       track_max_steps=track_max_steps,
       *args,
       **clean_kwargs,
-  )
+  )  
   return sampler, spec
 
 
@@ -421,12 +423,15 @@ class DfsSampler(Sampler):
       p: Tuple[float, ...] = (0.5,), k: int = 4, eps: float = 0.01, length_2 = None, tst_Sampler = None, 
   ):
     graph = None
+    # print('88888888888888')
     if tst_Sampler == None:
       graph = self._random_er_graph(
         nb_nodes=length, p=self._rng.choice(p),
         directed=True, acyclic=False, weighted=False)
     
     elif tst_Sampler == 'community':
+      print(tst_Sampler, length)
+      
       graph = self._random_community_graph(  
           nb_nodes=length, k=k, p=self._rng.choice(p), eps=eps,
           directed=True, acyclic=False, weighted=False)
