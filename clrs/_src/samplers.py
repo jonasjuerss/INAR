@@ -291,7 +291,10 @@ def build_sampler(
   sampler_class = SAMPLERS[name]
   # Ignore kwargs not accepted by the sampler.
   sampler_args = inspect.signature(sampler_class._sample_data).parameters  # pylint:disable=protected-access
+  
   clean_kwargs = {k: kwargs[k] for k in kwargs if k in sampler_args}
+  clean_kwargs['tst_Sampler'] = kwargs.get('tst_sampler', None)
+  
   if set(clean_kwargs) != set(kwargs):
     logging.warning('Ignoring kwargs %s when building sampler class %s',
                     set(kwargs).difference(clean_kwargs), sampler_class)
@@ -459,11 +462,14 @@ class BfsSampler(Sampler):
         directed=False, acyclic=False, weighted=False)
     
     elif tst_Sampler == 'community':
+      # print(tst_Sampler, length)
       graph = self._random_community_graph(  
           nb_nodes=length, k=k, p=self._rng.choice(p), eps=eps,
           directed=False, acyclic=False, weighted=False)
     
     elif tst_Sampler == 'bipartite':
+      # print(tst_Sampler, length)
+      
       if length_2 is None:
       # Assume provided length is total length.
         length_2 = length // 2
